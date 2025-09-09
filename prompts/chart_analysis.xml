@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<prompt_template type="图表分析/计算" name="CHART_ANALYSIS">
+  <description>用于图表分析/计算的Prompt模板</description>
+  <prompt>请分析这个图表并回答相关问题。
+
+分析要点：
+1. 图表类型和结构
+2. 数据趋势和模式
+3. 关键数值和计算
+4. 结论和洞察
+
+用户问题：{question}
+
+请提供专业的数据分析和计算结果。</prompt>
+  <parameters>
+    <parameter name="question">用户问题</parameter>
+  </parameters>
+</prompt_template>

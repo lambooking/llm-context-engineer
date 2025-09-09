@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<prompt_template type="基础问答" name="BASIC_QA">
+    <description>用于基础问答的Prompt模板</description>
+    <prompt>你是一个专业的AI助手，请根据提供的图像内容回答用户的问题。
+请仔细观察图像中的细节，提供准确、详细的答案。
+
+用户问题：{question}
+
+请根据图像内容给出专业的回答。</prompt>
+    <parameters>
+        <parameter name="question">用户问题</parameter>
+    </parameters>
+</prompt_template>

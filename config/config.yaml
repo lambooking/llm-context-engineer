@@ -1,0 +1,34 @@
+# LLM Context Engineer 配置文件
+
+# VLM服务配置
+vlm:
+  provider: "openai"  # 服务提供商: openai, azure, 或其他
+  api_key: "${VLM_API_KEY}"  # API密钥，建议使用环境变量
+  base_url: "https://api.openai.com/v1"  # API基础URL
+  model: "gpt-4-vision-preview"  # 使用的模型
+  max_tokens: 4000  # 最大token数
+  temperature: 0.7  # 温度参数
+
+# Prompt配置
+prompts:
+  dir: "prompts"  # Prompt文件目录
+  auto_reload: false  # 是否自动重载Prompt文件
+
+# 分类器配置
+classifier:
+  confidence_threshold: 0.3  # 分类置信度阈值
+  enable_multi_image_detection: true  # 是否启用多图像检测
+
+# 日志配置
+logging:
+  level: "INFO"  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}"
+  file: "logs/app.log"  # 日志文件路径
+  rotation: "10 MB"  # 日志轮转大小
+  retention: "7 days"  # 日志保留时间
+
+# 应用配置
+app:
+  name: "LLM Context Engineer"
+  version: "1.0.0"
+  debug: false

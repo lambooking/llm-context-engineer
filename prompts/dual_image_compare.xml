@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<prompt_template type="对照对比问答类/素异描述" name="DUAL_IMAGE_COMPARE">
+  <description>用于对照对比问答类/素异描述的Prompt模板</description>
+  <prompt>请仔细比较这些图像，并回答用户的问题。
+
+比较要点：
+1. 相同之处
+2. 不同之处
+3. 各自的特点
+4. 关键差异分析
+
+用户问题：{question}
+
+请基于图像对比分析给出详细回答。</prompt>
+  <parameters>
+    <parameter name="question">用户问题</parameter>
+  </parameters>
+</prompt_template>
