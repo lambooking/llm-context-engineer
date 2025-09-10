@@ -27,6 +27,22 @@ logging:
   rotation: "10 MB"  # 日志轮转大小
   retention: "7 days"  # 日志保留时间
 
+# 批量处理配置
+batch_processing:
+  max_concurrent_requests: 5  # 最大并发请求数
+  request_interval: 0.1  # 请求间隔（秒）
+  retry_attempts: 3  # 重试次数
+  timeout: 60  # 请求超时时间（秒）
+
+# 图像预处理配置
+image_preprocessing:
+  enabled: true  # 是否启用图像预处理
+  max_resolution: [2048, 2048]  # 最大分辨率 [width, height]
+  quality: 85  # JPEG压缩质量
+  format: "JPEG"  # 输出格式
+  cache_dir: "cache/processed_images"  # 预处理缓存目录
+  parallel_workers: 4  # 预处理并行工作线程数
+
 # 应用配置
 app:
   name: "LLM Context Engineer"
