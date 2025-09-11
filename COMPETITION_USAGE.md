@@ -123,12 +123,23 @@ image_preprocessing:
   enabled: true
   max_resolution: [2048, 2048]  # 最大分辨率
   quality: 85                   # JPEG质量
+  
+  # TIF遥感图像处理
+  tif_processing_enabled: true  # 启用TIF处理
+  target_tile_size: 2048        # 切片尺寸
+  grid_rows: 3                  # 网格行数
+  grid_cols: 3                  # 网格列数
+  tif_jpeg_quality: 95          # TIF转换质量
 ```
 
 ### 6. 常见问题
 
 **Q: 如何处理大分辨率遥感图像？**
-A: 系统自动启用图像预处理，会将大图像压缩到合适的分辨率，同时保持质量。
+A: 系统专门支持TIF遥感图像处理：
+- 自动检测TIF格式文件
+- 将大TIF图像切分为3x3网格的切片
+- 生成处理后的整图和详细的切片信息
+- 支持缓存机制，避免重复处理相同图像
 
 **Q: 如何控制并发数量？**
 A: 在配置文件中修改`batch_processing.max_concurrent_requests`参数。

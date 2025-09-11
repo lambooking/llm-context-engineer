@@ -42,6 +42,13 @@ image_preprocessing:
   format: "JPEG"  # 输出格式
   cache_dir: "cache/processed_images"  # 预处理缓存目录
   parallel_workers: 4  # 预处理并行工作线程数
+  
+  # TIF图像处理配置
+  tif_processing_enabled: true  # 是否启用TIF处理
+  target_tile_size: 2048  # 切片目标尺寸
+  grid_rows: 3  # 网格行数
+  grid_cols: 3  # 网格列数
+  tif_jpeg_quality: 95  # TIF转换JPEG质量
 
 # 应用配置
 app:

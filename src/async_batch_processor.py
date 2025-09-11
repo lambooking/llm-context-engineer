@@ -17,7 +17,7 @@ from loguru import logger
 from asyncio_throttle import Throttler
 
 from .main_processor import LLMContextProcessor
-from .image_preprocessor import ImagePreprocessor, PreprocessingPipeline, create_preprocessor_from_config
+from .image_preprocessor import EnhancedImagePreprocessor, EnhancedPreprocessingPipeline, create_enhanced_preprocessor_from_config, TifProcessResult
 from .input_parser import InputParser
 from .vlm_client import VLMClient, VLMClientFactory
 
@@ -66,8 +66,8 @@ class AsyncBatchProcessor:
         
         # 初始化组件
         self.input_parser = InputParser()
-        self.image_preprocessor = create_preprocessor_from_config(self.config)
-        self.preprocessing_pipeline = PreprocessingPipeline(self.image_preprocessor)
+        self.image_preprocessor = create_enhanced_preprocessor_from_config(self.config)
+        self.preprocessing_pipeline = EnhancedPreprocessingPipeline(self.image_preprocessor)
         
         # 创建VLM客户端
         vlm_config = self.config.get('vlm', {})
@@ -227,12 +227,23 @@ class AsyncBatchProcessor:
         try:
             # 等待图像预处理完成
             processed_images = []
+            tif_results = []  # 存储TIF处理结果
+            
             for img_path in original_images:
-                processed_path = self.preprocessing_pipeline.get_processed_path(
+                processed_result = self.preprocessing_pipeline.get_processed_result(
                     img_path, 
                     timeout=30.0
                 )
-                processed_images.append(processed_path)
+                
+                if isinstance(processed_result, TifProcessResult):
+                    # TIF图像：使用resize后的整图路径
+                    processed_images.append(processed_result.resized_image_path)
+                    tif_results.append(processed_result)
+                    logger.debug(f"TIF图像处理完成: {img_path} -> {len(processed_result.tiles)} 个切片")
+                else:
+                    # 常规图像：直接使用路径
+                    processed_images.append(str(processed_result))
+                    tif_results.append(None)
             
             # 获取使用的Prompt
             if force_type:
@@ -247,6 +258,23 @@ class AsyncBatchProcessor:
             
             processing_time = time.time() - start_time
             
+            # 准备扩展的元数据
+            extended_metadata = {**metadata}
+            
+            # 添加TIF处理信息
+            tif_info = []
+            for i, tif_result in enumerate(tif_results):
+                if tif_result:
+                    tif_info.append({
+                        'original_path': original_images[i],
+                        'tiles_count': len(tif_result.tiles),
+                        'processing_time': tif_result.processing_time,
+                        'json_path': tif_result.json_path
+                    })
+            
+            if tif_info:
+                extended_metadata['tif_processing'] = tif_info
+            
             # 记录对话
             conversation = ConversationRecord(
                 timestamp=datetime.now().isoformat(),
@@ -260,7 +288,7 @@ class AsyncBatchProcessor:
                 error=result.get('error'),
                 usage=result.get('usage'),
                 processing_time=processing_time,
-                metadata=metadata
+                metadata=extended_metadata
             )
             
             self.conversations.append(conversation)
