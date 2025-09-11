@@ -3,11 +3,11 @@
 # VLM服务配置
 vlm:
   provider: "openai"  # 服务提供商: openai, azure, 或其他
-  api_key: "${VLM_API_KEY}"  # API密钥，建议使用环境变量
-  base_url: "https://api.openai.com/v1"  # API基础URL
-  model: "gpt-4-vision-preview"  # 使用的模型
-  max_tokens: 4000  # 最大token数
-  temperature: 0.7  # 温度参数
+  api_key: "sk-12"  # API密钥，建议使用环境变量
+  base_url: "http://localhost:1237/v1"  # API基础URL
+  model: "qwen2.5-vl-7b-instruct"  # 使用的模型
+  max_tokens: 8000  # 最大token数
+  temperature: 0  # 温度参数
 
 # Prompt配置
 prompts:
@@ -29,7 +29,7 @@ logging:
 
 # 批量处理配置
 batch_processing:
-  max_concurrent_requests: 5  # 最大并发请求数
+  max_concurrent_requests: 1  # 最大并发请求数
   request_interval: 0.1  # 请求间隔（秒）
   retry_attempts: 3  # 重试次数
   timeout: 60  # 请求超时时间（秒）

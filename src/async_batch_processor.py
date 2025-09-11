@@ -19,7 +19,7 @@ from asyncio_throttle import Throttler
 from .main_processor import LLMContextProcessor
 from .image_preprocessor import EnhancedImagePreprocessor, EnhancedPreprocessingPipeline, create_enhanced_preprocessor_from_config, TifProcessResult
 from .input_parser import InputParser
-from .vlm_client import VLMClient, VLMClientFactory
+from .custom_vlm_client import EnhancedVLMClientFactory
 
 
 @dataclass
@@ -72,7 +72,9 @@ class AsyncBatchProcessor:
         # 创建VLM客户端
         vlm_config = self.config.get('vlm', {})
         provider = vlm_config.get('provider', 'openai')
-        self.vlm_client = VLMClientFactory.create_client(provider, **vlm_config)
+        # 从配置中移除provider，避免重复传递
+        vlm_config_clean = {k: v for k, v in vlm_config.items() if k != 'provider'}
+        self.vlm_client = EnhancedVLMClientFactory.create_client(provider, **vlm_config_clean)
         
         # 创建主处理器
         self.processor = LLMContextProcessor(
