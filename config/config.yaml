@@ -30,9 +30,9 @@ logging:
 # 批量处理配置
 batch_processing:
   max_concurrent_requests: 1  # 最大并发请求数
-  request_interval: 0.1  # 请求间隔（秒）
+  request_interval: 5  # 请求间隔（秒）
   retry_attempts: 3  # 重试次数
-  timeout: 60  # 请求超时时间（秒）
+  timeout: 500  # 请求超时时间（秒）
 
 # 图像预处理配置
 image_preprocessing:
@@ -49,6 +49,14 @@ image_preprocessing:
   grid_rows: 3  # 网格行数
   grid_cols: 3  # 网格列数
   tif_jpeg_quality: 95  # TIF转换JPEG质量
+
+# 优化配置
+optimization:
+  batch_size: 3  # 每批次处理的查询数量
+  memory_cleanup_interval: 5  # 每N个批次执行内存清理
+  progressive_processing: true  # 渐进式处理
+  max_memory_usage: 75.0  # 最大内存使用率(%)
+  image_batch_size: 2  # 图像预处理批次大小
 
 # 应用配置
 app:

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from src.input_parser import InputParser
 from src.main_processor import ProcessorFactory
 from src.async_batch_processor import AsyncBatchProcessor
+from src.optimized_batch_processor import OptimizedBatchProcessor
 from src.constants import QuestionType
 
 
@@ -72,7 +73,7 @@ def validate_input(input_path: str) -> bool:
     return validation_result['valid']
 
 
-async def process_batch_async(input_path: str, output_path: str = None, config_path: str = "config/config.yaml", dry_run: bool = False):
+async def process_batch_async(input_path: str, output_path: str = None, config_path: str = "config/config.yaml", dry_run: bool = False, optimized: bool = True):
     """异步批量处理输入数据"""
     if dry_run:
         # 预览模式使用同步解析
@@ -96,9 +97,12 @@ async def process_batch_async(input_path: str, output_path: str = None, config_p
     
     # 使用异步批量处理器
     try:
+        # 准备配置
+        final_config_path = config_path
+        temp_config_path = None
+        
         # 如果指定了输出路径，创建自定义配置
         if output_path:
-            # 加载原始配置
             import yaml
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
@@ -113,13 +117,19 @@ async def process_batch_async(input_path: str, output_path: str = None, config_p
             with open(temp_config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, allow_unicode=True)
             
-            processor = AsyncBatchProcessor(temp_config_path)
-            
-            # 删除临时配置文件
-            import os
-            os.remove(temp_config_path)
+            final_config_path = temp_config_path
+        
+        # 选择处理器类型
+        if optimized:
+            processor = OptimizedBatchProcessor(final_config_path)
+            logger.info("使用优化版批量处理器")
         else:
-            processor = AsyncBatchProcessor(config_path)
+            processor = AsyncBatchProcessor(final_config_path)
+            logger.info("使用标准版批量处理器")
+        
+        # 清理临时配置文件
+        if temp_config_path and os.path.exists(temp_config_path):
+            os.remove(temp_config_path)
         
         logger.info("异步批量处理器初始化完成")
         logger.info(f"输入路径: {input_path}")
@@ -146,10 +156,10 @@ async def process_batch_async(input_path: str, output_path: str = None, config_p
         return
 
 
-def process_batch(input_path: str, output_path: str, dry_run: bool = False):
+def process_batch(input_path: str, output_path: str, dry_run: bool = False, optimized: bool = True):
     """批量处理输入数据（兼容性包装）"""
     # 运行异步处理
-    asyncio.run(process_batch_async(input_path, output_path, "config/config.yaml", dry_run))
+    asyncio.run(process_batch_async(input_path, output_path, "config/config.yaml", dry_run, optimized))
 
 
 def main():
@@ -172,6 +182,8 @@ def main():
     parser.add_argument("--config", default="config/config.yaml", help="配置文件路径")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="日志级别")
     parser.add_argument("--log-file", help="日志文件路径")
+    parser.add_argument("--no-optimization", action="store_true", help="禁用优化模式，使用标准处理器")
+    parser.add_argument("--batch-size", type=int, help="批次大小（覆盖配置文件设置）")
     
     args = parser.parse_args()
     
@@ -194,7 +206,13 @@ def main():
             return
         
         # 批量处理
-        process_batch(args.input_path, args.output_path, args.dry_run)
+        optimized = not args.no_optimization
+        if optimized:
+            print("🚀 使用优化模式 - 内存友好的分批处理")
+        else:
+            print("⚡ 使用标准模式 - 传统并发处理")
+            
+        process_batch(args.input_path, args.output_path, args.dry_run, optimized)
         
     except KeyboardInterrupt:
         logger.info("用户中断程序")
