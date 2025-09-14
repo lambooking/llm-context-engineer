@@ -95,7 +95,7 @@ class TifProcessor:
 
     def process_tif(self, tif_path: str) -> TifProcessResult:
         """
-        处理单个TIF文件
+        处理单个TIF文件（优化版本）
 
         Args:
             tif_path: TIF文件路径
@@ -109,13 +109,25 @@ class TifProcessor:
         logger.info(f"开始处理TIF文件: {tif_path}")
         t_start_total = time.time()
 
-        # 转换和resize
+        # 检查文件大小限制
+        file_size_mb = os.path.getsize(tif_path) / (1024 * 1024)
+        max_size_mb = getattr(self.config, 'max_tif_size_mb', 100)
+        max_processing_time = getattr(self.config, 'max_tif_processing_time', 60)
+        
+        if hasattr(self.config, 'skip_large_tif') and self.config.skip_large_tif and file_size_mb > max_size_mb:
+            logger.warning(f"跳过过大的TIF文件: {tif_path} ({file_size_mb:.1f}MB > {max_size_mb}MB)")
+            # 返回简化的处理结果
+            return self._create_simplified_tif_result(tif_path, base_name)
+
+        # 转换和resize（使用更快的算法）
         t_start_convert = time.time()
-        img = self._convert_tif_to_pil(tif_path)
+        img = self._convert_tif_to_pil_fast(tif_path)
 
         target_w = self.config.grid_cols * self.config.target_tile_size
         target_h = self.config.grid_rows * self.config.target_tile_size
-        img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        
+        # 使用更快的resize算法
+        img = img.resize((target_w, target_h), Image.Resampling.BILINEAR)
 
         # 保存resize后的整图
         resized_jpg_path = self.output_dir / f"{base_name}_resized.jpg"
@@ -216,6 +228,56 @@ class TifProcessor:
                 arr = arr.clip(0, 255).astype('uint8')
 
             return Image.fromarray(arr).convert("RGB")
+    
+    def _convert_tif_to_pil_fast(self, tif_path: Path) -> Image.Image:
+        """快速将TIF转换为PIL Image（优化版本）"""
+        try:
+            with rasterio.open(tif_path) as src:
+                # 读取第一个波段或RGB波段
+                if src.count >= 3:
+                    # RGB图像，读取前3个波段
+                    arr = src.read([1, 2, 3])
+                    arr = np.transpose(arr, (1, 2, 0))
+                else:
+                    # 单波段图像
+                    arr = src.read(1)
+                
+                # 快速数据类型转换
+                if arr.dtype != 'uint8':
+                    # 使用更快的归一化方法
+                    if arr.dtype in ['uint16', 'int16']:
+                        arr = (arr / 256).astype('uint8')
+                    else:
+                        arr = arr.astype('float32')
+                        # 使用percentile进行更稳定的归一化
+                        p2, p98 = np.percentile(arr, (2, 98))
+                        arr = np.clip((arr - p2) / (p98 - p2) * 255, 0, 255).astype('uint8')
+                
+                # 确保是RGB格式
+                if len(arr.shape) == 2:
+                    arr = np.stack([arr, arr, arr], axis=-1)
+                elif arr.shape[-1] == 1:
+                    arr = np.repeat(arr, 3, axis=-1)
+                
+                return Image.fromarray(arr, mode='RGB')
+        except Exception as e:
+            logger.warning(f"快速TIF转换失败，使用标准方法: {e}")
+            return self._convert_tif_to_pil(tif_path)
+    
+    def _create_simplified_tif_result(self, tif_path: Path, base_name: str) -> TifProcessResult:
+        """为跳过的大文件创建简化的处理结果"""
+        # 创建一个简单的占位符图像
+        placeholder_path = self.output_dir / f"{base_name}_placeholder.jpg"
+        placeholder_img = Image.new('RGB', (512, 512), color='gray')
+        placeholder_img.save(placeholder_path, "JPEG", quality=50)
+        
+        return TifProcessResult(
+            orig_file=str(tif_path),
+            resized_image_path=str(placeholder_path),
+            tiles=[],  # 空的tiles列表
+            processing_time=0.1,
+            json_path=""
+        )
 
     def _log_to_csv(self, results: List[Dict[str, Any]]):
         """记录结果到CSV"""

@@ -14,7 +14,7 @@ from .constants import DEFAULT_MODEL, MAX_TOKENS, TEMPERATURE
 class CustomVLMClient:
     """自定义VLM API客户端，支持/generate端点"""
     
-    def __init__(self, api_key: str, base_url: str = "http://localhost:1237", model: str = DEFAULT_MODEL):
+    def __init__(self, api_key: str, base_url: str = "http://localhost:1237", model: str = DEFAULT_MODEL, timeout: int = 60):
         """
         初始化自定义VLM客户端
         
@@ -22,10 +22,12 @@ class CustomVLMClient:
             api_key: API密钥
             base_url: API基础URL
             model: 使用的模型名称
+            timeout: 请求超时时间（秒）
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.model = model
+        self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json'
@@ -106,7 +108,7 @@ class CustomVLMClient:
             response = self.session.post(
                 f"{self.base_url}/generate",
                 json=payload,
-                timeout=120  # 增加超时时间，因为模型推理可能较慢
+                timeout=self.timeout  # 使用配置的超时时间
             )
             
             response.raise_for_status()
@@ -204,5 +206,6 @@ class EnhancedVLMClientFactory:
         return VLMClient(
             api_key=config.get('api_key', 'sk-12'),  # 本地API可能不需要真实密钥
             base_url=base_url,
-            model=config.get('model', DEFAULT_MODEL)
+            model=config.get('model', DEFAULT_MODEL),
+            timeout=config.get('timeout', 60)  # 传递超时配置
         )

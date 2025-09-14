@@ -29,10 +29,10 @@ logging:
 
 # 批量处理配置
 batch_processing:
-  max_concurrent_requests: 1  # 最大并发请求数
+  max_concurrent_requests: 3  # 最大并发请求数
   request_interval: 5  # 请求间隔（秒）
   retry_attempts: 3  # 重试次数
-  timeout: 500  # 请求超时时间（秒）
+  timeout: 600  # 请求超时时间（秒）
 
 # 图像预处理配置
 image_preprocessing:

@@ -14,7 +14,7 @@ from .constants import DEFAULT_MODEL, MAX_TOKENS, TEMPERATURE
 class VLMClient:
     """VLM API客户端，支持GPT-4V格式的请求"""
     
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1", model: str = DEFAULT_MODEL):
+    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1", model: str = DEFAULT_MODEL, timeout: int = 60):
         """
         初始化VLM客户端
         
@@ -22,10 +22,12 @@ class VLMClient:
             api_key: API密钥
             base_url: API基础URL
             model: 使用的模型名称
+            timeout: 请求超时时间（秒）
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.model = model
+        self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({
             'Authorization': f'Bearer {api_key}',
@@ -135,7 +137,7 @@ class VLMClient:
             response = self.session.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
-                timeout=60
+                timeout=self.timeout
             )
             
             response.raise_for_status()

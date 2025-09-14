@@ -74,6 +74,8 @@ class AsyncBatchProcessor:
         provider = vlm_config.get('provider', 'openai')
         # 从配置中移除provider，避免重复传递
         vlm_config_clean = {k: v for k, v in vlm_config.items() if k != 'provider'}
+        # 添加batch_processing中的timeout配置到VLM客户端配置
+        vlm_config_clean['timeout'] = self.batch_config.timeout
         self.vlm_client = EnhancedVLMClientFactory.create_client(provider, **vlm_config_clean)
         
         # 创建主处理器
