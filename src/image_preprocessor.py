@@ -93,9 +93,60 @@ class TifProcessor:
         file_size_kb = os.path.getsize(out_path) // 1024
         return round(t1 - t0, 4), file_size_kb
 
+    def _determine_processing_strategy(self, img_width: int, img_height: int) -> Dict[str, Any]:
+        """
+        根据图像尺寸确定处理策略
+
+        Args:
+            img_width: 图像宽度
+            img_height: 图像高度
+
+        Returns:
+            Dict: 包含处理策略的字典
+        """
+        target_size = self.config.target_tile_size
+        max_dimension = max(img_width, img_height)
+
+        if max_dimension < target_size:
+            # 策略1: 小图像，不做任何处理
+            return {
+                'strategy': 'no_processing',
+                'resize_needed': False,
+                'grid_rows': 1,
+                'grid_cols': 1,
+                'target_width': img_width,
+                'target_height': img_height,
+                'tile_width': img_width,
+                'tile_height': img_height
+            }
+        elif max_dimension < 3 * target_size:
+            # 策略2: 中等图像，2x2切块但不resize
+            return {
+                'strategy': '2x2_no_resize',
+                'resize_needed': False,
+                'grid_rows': 2,
+                'grid_cols': 2,
+                'target_width': img_width,
+                'target_height': img_height,
+                'tile_width': img_width // 2,
+                'tile_height': img_height // 2
+            }
+        else:
+            # 策略3: 大图像，保持原有逻辑
+            return {
+                'strategy': 'resize_and_tile',
+                'resize_needed': True,
+                'grid_rows': self.config.grid_rows,
+                'grid_cols': self.config.grid_cols,
+                'target_width': self.config.grid_cols * target_size,
+                'target_height': self.config.grid_rows * target_size,
+                'tile_width': target_size,
+                'tile_height': target_size
+            }
+
     def process_tif(self, tif_path: str) -> TifProcessResult:
         """
-        处理单个TIF文件（优化版本）
+        处理单个TIF文件（支持不同尺寸策略）
 
         Args:
             tif_path: TIF文件路径
@@ -112,83 +163,128 @@ class TifProcessor:
         # 检查文件大小限制
         file_size_mb = os.path.getsize(tif_path) / (1024 * 1024)
         max_size_mb = getattr(self.config, 'max_tif_size_mb', 100)
-        max_processing_time = getattr(self.config, 'max_tif_processing_time', 60)
-        
+
         if hasattr(self.config, 'skip_large_tif') and self.config.skip_large_tif and file_size_mb > max_size_mb:
             logger.warning(f"跳过过大的TIF文件: {tif_path} ({file_size_mb:.1f}MB > {max_size_mb}MB)")
-            # 返回简化的处理结果
             return self._create_simplified_tif_result(tif_path, base_name)
 
-        # 转换和resize（使用更快的算法）
+        # 转换TIF为PIL图像
         t_start_convert = time.time()
         img = self._convert_tif_to_pil_fast(tif_path)
+        original_width, original_height = img.size
 
-        target_w = self.config.grid_cols * self.config.target_tile_size
-        target_h = self.config.grid_rows * self.config.target_tile_size
-        
-        # 使用更快的resize算法
-        img = img.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        logger.info(f"原始图像尺寸: {original_width}x{original_height}")
 
-        # 保存resize后的整图
-        resized_jpg_path = self.output_dir / f"{base_name}_resized.jpg"
+        # 根据尺寸确定处理策略
+        strategy = self._determine_processing_strategy(original_width, original_height)
+        logger.info(f"采用处理策略: {strategy['strategy']}")
+
+        # 根据策略处理图像
+        if strategy['resize_needed']:
+            # 需要resize的情况（大图像）
+            img = img.resize((strategy['target_width'], strategy['target_height']), Image.Resampling.BILINEAR)
+            logger.debug(f"图像已resize到: {strategy['target_width']}x{strategy['target_height']}")
+
+        # 保存resize后的整图（或原图）
+        if strategy['strategy'] == 'no_processing':
+            # 小图像直接保存原图
+            resized_jpg_path = self.output_dir / f"{base_name}_original.jpg"
+        else:
+            resized_jpg_path = self.output_dir / f"{base_name}_resized.jpg"
+
         img.save(resized_jpg_path, "JPEG", quality=self.config.tif_jpeg_quality)
         t_end_convert = time.time()
         convert_time_s = round(t_end_convert - t_start_convert, 4)
 
-        logger.debug(f"TIF转换完成，用时 {convert_time_s}s，目标大小 {target_w}x{target_h}")
+        logger.debug(f"TIF转换完成，用时 {convert_time_s}s")
 
         # 切分tiles
         tiles_info = []
         csv_results = []
 
-        with ThreadPoolExecutor(max_workers=self.config.parallel_workers) as executor:
-            tasks = []
-            for r in range(self.config.grid_rows):
-                for c in range(self.config.grid_cols):
-                    left = c * self.config.target_tile_size
-                    top = r * self.config.target_tile_size
-                    out_name = f"{base_name}_col{c}_row{r}_x{left}_y{top}.jpg"
-                    out_path = self.output_dir / out_name
+        if strategy['strategy'] == 'no_processing':
+            # 小图像不切块，直接使用整图
+            tile_info = {
+                "tile_file": f"{base_name}_original.jpg",
+                "left": 0,
+                "top": 0,
+                "width": original_width,
+                "height": original_height
+            }
+            tiles_info.append(tile_info)
 
-                    task = executor.submit(
-                        self._save_tile, img, left, top,
-                        self.config.target_tile_size, str(out_path),
-                        self.config.tif_jpeg_quality
-                    )
-                    tasks.append((task, r, c, out_name, left, top))
+            csv_result = {
+                "orig_file": tif_path.name,
+                "tile_file": f"{base_name}_original.jpg",
+                "col": 0, "row": 0,
+                "left": 0, "top": 0,
+                "width": original_width,
+                "height": original_height,
+                "file_kb": os.path.getsize(resized_jpg_path) // 1024,
+                "convert_time_s": convert_time_s,
+                "tile_time_s": 0.0
+            }
+            csv_results.append(csv_result)
 
-            # 收集结果
-            for task, r, c, out_name, left, top in tasks:
-                tile_time_s, file_size_kb = task.result()
+        else:
+            # 需要切块的情况（中等图像和大图像）
+            with ThreadPoolExecutor(max_workers=self.config.parallel_workers) as executor:
+                tasks = []
 
-                tile_info = {
-                    "tile_file": out_name,
-                    "left": left,
-                    "top": top,
-                    "width": self.config.target_tile_size,
-                    "height": self.config.target_tile_size
-                }
-                tiles_info.append(tile_info)
+                for r in range(strategy['grid_rows']):
+                    for c in range(strategy['grid_cols']):
+                        left = c * strategy['tile_width']
+                        top = r * strategy['tile_height']
 
-                csv_result = {
-                    "orig_file": tif_path.name,
-                    "tile_file": out_name,
-                    "col": c, "row": r,
-                    "left": left, "top": top,
-                    "width": self.config.target_tile_size,
-                    "height": self.config.target_tile_size,
-                    "file_kb": file_size_kb,
-                    "convert_time_s": convert_time_s,
-                    "tile_time_s": tile_time_s
-                }
-                csv_results.append(csv_result)
+                        # 确保不超出图像边界
+                        actual_tile_width = min(strategy['tile_width'], img.width - left)
+                        actual_tile_height = min(strategy['tile_height'], img.height - top)
 
-                logger.debug(f"保存tile {out_name} {file_size_kb}KB {tile_time_s}s")
+                        out_name = f"{base_name}_col{c}_row{r}_x{left}_y{top}.jpg"
+                        out_path = self.output_dir / out_name
+
+                        task = executor.submit(
+                            self._save_tile_with_size, img, left, top,
+                            actual_tile_width, actual_tile_height, str(out_path),
+                            self.config.tif_jpeg_quality
+                        )
+                        tasks.append((task, r, c, out_name, left, top, actual_tile_width, actual_tile_height))
+
+                # 收集结果
+                for task, r, c, out_name, left, top, tile_width, tile_height in tasks:
+                    tile_time_s, file_size_kb = task.result()
+
+                    tile_info = {
+                        "tile_file": out_name,
+                        "left": left,
+                        "top": top,
+                        "width": tile_width,
+                        "height": tile_height
+                    }
+                    tiles_info.append(tile_info)
+
+                    csv_result = {
+                        "orig_file": tif_path.name,
+                        "tile_file": out_name,
+                        "col": c, "row": r,
+                        "left": left, "top": top,
+                        "width": tile_width,
+                        "height": tile_height,
+                        "file_kb": file_size_kb,
+                        "convert_time_s": convert_time_s,
+                        "tile_time_s": tile_time_s
+                    }
+                    csv_results.append(csv_result)
+
+                    logger.debug(f"保存tile {out_name} {file_size_kb}KB {tile_time_s}s")
 
         # 保存JSON信息
         json_info = {
             "orig_file": tif_path.name,
             "resized_image": str(resized_jpg_path),
+            "original_size": [original_width, original_height],
+            "processing_strategy": strategy['strategy'],
+            "grid_size": [strategy['grid_cols'], strategy['grid_rows']],
             "tiles": tiles_info
         }
         json_path = self.json_dir / f"{base_name}.json"
@@ -201,7 +297,7 @@ class TifProcessor:
         t_end_total = time.time()
         processing_time = round(t_end_total - t_start_total, 4)
 
-        logger.info(f"TIF处理完成: {tif_path} 用时 {processing_time}s")
+        logger.info(f"TIF处理完成: {tif_path} 用时 {processing_time}s，策略: {strategy['strategy']}")
 
         return TifProcessResult(
             orig_file=tif_path.name,
@@ -210,6 +306,16 @@ class TifProcessor:
             processing_time=processing_time,
             json_path=str(json_path)
         )
+
+    def _save_tile_with_size(self, img: Image.Image, left: int, top: int,
+                             tile_width: int, tile_height: int, out_path: str, quality: int = 95) -> Tuple[float, int]:
+        """保存指定尺寸的tile"""
+        tile = img.crop((left, top, left + tile_width, top + tile_height))
+        t0 = time.time()
+        tile.save(out_path, "JPEG", quality=quality)
+        t1 = time.time()
+        file_size_kb = os.path.getsize(out_path) // 1024
+        return round(t1 - t0, 4), file_size_kb
 
     def _convert_tif_to_pil(self, tif_path: Path) -> Image.Image:
         """将TIF转换为PIL Image"""
@@ -228,7 +334,7 @@ class TifProcessor:
                 arr = arr.clip(0, 255).astype('uint8')
 
             return Image.fromarray(arr).convert("RGB")
-    
+
     def _convert_tif_to_pil_fast(self, tif_path: Path) -> Image.Image:
         """快速将TIF转换为PIL Image（优化版本）"""
         try:
@@ -241,7 +347,7 @@ class TifProcessor:
                 else:
                     # 单波段图像
                     arr = src.read(1)
-                
+
                 # 快速数据类型转换
                 if arr.dtype != 'uint8':
                     # 使用更快的归一化方法
@@ -252,25 +358,25 @@ class TifProcessor:
                         # 使用percentile进行更稳定的归一化
                         p2, p98 = np.percentile(arr, (2, 98))
                         arr = np.clip((arr - p2) / (p98 - p2) * 255, 0, 255).astype('uint8')
-                
+
                 # 确保是RGB格式
                 if len(arr.shape) == 2:
                     arr = np.stack([arr, arr, arr], axis=-1)
                 elif arr.shape[-1] == 1:
                     arr = np.repeat(arr, 3, axis=-1)
-                
+
                 return Image.fromarray(arr, mode='RGB')
         except Exception as e:
             logger.warning(f"快速TIF转换失败，使用标准方法: {e}")
             return self._convert_tif_to_pil(tif_path)
-    
+
     def _create_simplified_tif_result(self, tif_path: Path, base_name: str) -> TifProcessResult:
         """为跳过的大文件创建简化的处理结果"""
         # 创建一个简单的占位符图像
         placeholder_path = self.output_dir / f"{base_name}_placeholder.jpg"
         placeholder_img = Image.new('RGB', (512, 512), color='gray')
         placeholder_img.save(placeholder_path, "JPEG", quality=50)
-        
+
         return TifProcessResult(
             orig_file=str(tif_path),
             resized_image_path=str(placeholder_path),
@@ -282,7 +388,7 @@ class TifProcessor:
     def _log_to_csv(self, results: List[Dict[str, Any]]):
         """记录结果到CSV"""
         fieldnames = ["orig_file", "tile_file", "col", "row", "left", "top",
-                     "width", "height", "file_kb", "convert_time_s", "tile_time_s"]
+                      "width", "height", "file_kb", "convert_time_s", "tile_time_s"]
 
         with self._csv_lock:
             # 检查文件是否存在，决定是否写入头部
@@ -823,7 +929,7 @@ if __name__ == "__main__":
     preprocessor = create_enhanced_preprocessor_from_config(config_dict)
 
     # 处理图像
-    folder_path = "E:/workforzhangjiang/competition-VQA/Gradio/dataFORtest/tif"  # 替换成你的文件夹路径
+    folder_path = "E:/workforzhangjiang/competition-VQA/HJJ-VQAdata/input_path/QA/image"  # 替换成你的文件夹路径
     image_paths = get_image_paths_from_folder(folder_path)
 
     # image_paths = ["image1.jpg", "satellite.tif", "image2.png"]
