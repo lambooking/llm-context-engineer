@@ -30,6 +30,7 @@ class BatchConfig:
     retry_attempts: int = 3
     timeout: int = 60
     save_conversations: bool = True
+    streaming_output: bool = True  # 流式输出开关
     output_dir: str = "output"
 
 
@@ -111,6 +112,7 @@ class AsyncBatchProcessor:
             retry_attempts=batch_settings.get('retry_attempts', 3),
             timeout=batch_settings.get('timeout', 60),
             save_conversations=batch_settings.get('save_conversations', True),
+            streaming_output=batch_settings.get('streaming_output', True),
             output_dir=batch_settings.get('output_dir', 'output')
         )
     
@@ -171,8 +173,8 @@ class AsyncBatchProcessor:
         logger.info(f"批量处理完成: {success_count}/{len(queries)} 成功")
         return summary
     
-    async def _process_queries_async(self, queries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """异步处理查询列表"""
+    async def _process_queries_async(self, queries: List[Dict[str, Any]], progress_callback=None) -> List[Dict[str, Any]]:
+        """异步处理查询列表，支持流式输出"""
         # 创建限流器
         throttler = Throttler(
             rate_limit=self.batch_config.max_concurrent_requests,
@@ -185,23 +187,74 @@ class AsyncBatchProcessor:
             task = self._process_single_query_with_throttle(throttler, query, i)
             tasks.append(task)
         
-        # 执行所有任务
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # 流式处理：使用as_completed逐个处理完成的任务
+        processed_results = [None] * len(tasks)  # 保持原始顺序
+        task_to_index = {task: i for i, task in enumerate(tasks)}
         
-        # 处理异常结果
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"查询 {i} 处理异常: {result}")
-                processed_results.append({
+        for completed_task in asyncio.as_completed(tasks):
+            try:
+                result = await completed_task
+                task_index = task_to_index[completed_task]
+                processed_results[task_index] = result
+                
+                # 立即显示结果（流式输出）
+                if progress_callback:
+                    await progress_callback(result, task_index, len(tasks))
+                else:
+                    self._display_single_result(result, task_index)
+                    
+            except Exception as e:
+                task_index = task_to_index[completed_task]
+                logger.error(f"查询 {task_index} 处理异常: {e}")
+                
+                error_result = {
                     'success': False,
-                    'error': str(result),
-                    'query_index': i
-                })
-            else:
-                processed_results.append(result)
+                    'error': str(e),
+                    'query_index': task_index,
+                    'question': queries[task_index].get('question', ''),
+                    'processing_time': 0.0,
+                    'metadata': queries[task_index].get('metadata', {})
+                }
+                processed_results[task_index] = error_result
+                
+                # 显示错误结果
+                if progress_callback:
+                    await progress_callback(error_result, task_index, len(tasks))
+                else:
+                    self._display_single_result(error_result, task_index)
         
         return processed_results
+    
+    def _display_single_result(self, result: Dict[str, Any], query_index: int):
+        """显示单个查询结果（流式输出）"""
+        print(f"\n{'='*60}")
+        print(f"查询 #{query_index + 1} 完成")
+        print(f"{'='*60}")
+        
+        if result['success']:
+            print(f"问题: {result.get('question', 'N/A')}")
+            print(f"问题类型: {result.get('question_type', 'N/A')}")
+            print(f"图像数量: {result.get('images_count', 0)}")
+            print(f"处理时间: {result.get('processing_time', 0):.2f}秒")
+            
+            if 'classification_confidence' in result:
+                print(f"分类置信度: {result['classification_confidence']:.2f}")
+            
+            print(f"\n回答:")
+            print(f"{result.get('answer', 'N/A')}")
+            
+            if 'usage' in result:
+                usage = result['usage']
+                print(f"\nToken使用:")
+                print(f"  输入: {usage.get('prompt_tokens', 0)}")
+                print(f"  输出: {usage.get('completion_tokens', 0)}")
+                print(f"  总计: {usage.get('total_tokens', 0)}")
+        else:
+            print(f"❌ 处理失败")
+            print(f"问题: {result.get('question', 'N/A')}")
+            print(f"错误: {result.get('error', 'Unknown error')}")
+        
+        print(f"{'='*60}")
     
     async def _process_single_query_with_throttle(
         self, 

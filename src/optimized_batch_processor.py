@@ -75,6 +75,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             retry_attempts=batch_settings.get('retry_attempts', 3),
             timeout=batch_settings.get('timeout', 60),
             save_conversations=batch_settings.get('save_conversations', True),
+            streaming_output=batch_settings.get('streaming_output', True),
             output_dir=batch_settings.get('output_dir', 'output'),
             # 优化配置
             batch_size=batch_settings.get('batch_size', 10),
@@ -131,7 +132,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
                 if self.optimized_config.progressive_loading:
                     await self._preprocess_batch_images(batch_queries)
                 
-                # 处理当前批次
+                # 处理当前批次（支持流式输出）
                 batch_results = await self._process_batch_optimized(batch_queries, batch_idx)
                 all_results.extend(batch_results)
                 
@@ -190,8 +191,9 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             logger.debug(f"预处理批次图像: {len(batch_images)} 张")
             self.preprocessing_pipeline.add_to_pipeline(batch_images)
     
-    async def _process_batch_optimized(self, batch_queries: List[Dict[str, Any]], batch_idx: int) -> List[Dict[str, Any]]:
-        """优化的批次处理"""
+    async def _process_batch_optimized(self, batch_queries: List[Dict[str, Any]], batch_idx: int, 
+                                     progress_callback=None) -> List[Dict[str, Any]]:
+        """优化的批次处理，支持流式输出"""
         # 创建限流器（每个批次独立）
         throttler = Throttler(
             rate_limit=self.optimized_config.max_concurrent_requests,
@@ -205,27 +207,77 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             task = self._process_single_query_with_throttle(throttler, query, query_index)
             tasks.append(task)
         
-        # 执行当前批次的所有任务
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # 流式处理：使用as_completed逐个处理完成的任务
+        processed_results = [None] * len(tasks)  # 保持原始顺序
+        task_to_index = {task: i for i, task in enumerate(tasks)}
         
-        # 处理异常结果
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                query_index = batch_idx * self.optimized_config.batch_size + i
-                logger.error(f"查询 {query_index} 处理异常: {result}")
-                processed_results.append({
+        for completed_task in asyncio.as_completed(tasks):
+            try:
+                result = await completed_task
+                task_index = task_to_index[completed_task]
+                query_index = batch_idx * self.optimized_config.batch_size + task_index
+                
+                processed_results[task_index] = result
+                
+                # 立即显示结果（流式输出）
+                if progress_callback:
+                    await progress_callback(result, query_index, len(tasks))
+                else:
+                    self._display_single_result(result, query_index)
+                    
+            except Exception as e:
+                task_index = task_to_index[completed_task]
+                query_index = batch_idx * self.optimized_config.batch_size + task_index
+                logger.error(f"查询 {query_index} 处理异常: {e}")
+                
+                error_result = {
                     'success': False,
-                    'error': str(result),
+                    'error': str(e),
                     'query_index': query_index,
-                    'question': batch_queries[i].get('question', ''),
+                    'question': batch_queries[task_index].get('question', ''),
                     'processing_time': 0.0,
-                    'metadata': batch_queries[i].get('metadata', {})
-                })
-            else:
-                processed_results.append(result)
+                    'metadata': batch_queries[task_index].get('metadata', {})
+                }
+                processed_results[task_index] = error_result
+                
+                # 显示错误结果
+                if progress_callback:
+                    await progress_callback(error_result, query_index, len(tasks))
+                else:
+                    self._display_single_result(error_result, query_index)
         
         return processed_results
+    
+    def _display_single_result(self, result: Dict[str, Any], query_index: int):
+        """显示单个查询结果（流式输出）"""
+        print(f"\n{'='*60}")
+        print(f"查询 #{query_index + 1} 完成")
+        print(f"{'='*60}")
+        
+        if result['success']:
+            print(f"问题: {result.get('question', 'N/A')}")
+            print(f"问题类型: {result.get('question_type', 'N/A')}")
+            print(f"图像数量: {result.get('images_count', 0)}")
+            print(f"处理时间: {result.get('processing_time', 0):.2f}秒")
+            
+            if 'classification_confidence' in result:
+                print(f"分类置信度: {result['classification_confidence']:.2f}")
+            
+            print(f"\n回答:")
+            print(f"{result.get('answer', 'N/A')}")
+            
+            if 'usage' in result:
+                usage = result['usage']
+                print(f"\nToken使用:")
+                print(f"  输入: {usage.get('prompt_tokens', 0)}")
+                print(f"  输出: {usage.get('completion_tokens', 0)}")
+                print(f"  总计: {usage.get('total_tokens', 0)}")
+        else:
+            print(f"❌ 处理失败")
+            print(f"问题: {result.get('question', 'N/A')}")
+            print(f"错误: {result.get('error', 'Unknown error')}")
+        
+        print(f"{'='*60}")
     
     async def _manage_memory(self, batch_idx: int):
         """内存管理"""

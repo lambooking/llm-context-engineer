@@ -33,6 +33,7 @@ batch_processing:
   request_interval: 5  # 请求间隔（秒）
   retry_attempts: 3  # 重试次数
   timeout: 600  # 请求超时时间（秒）
+  streaming_output: true  # 流式输出：每完成一个查询就立即显示结果
 
 # 图像预处理配置
 image_preprocessing:
