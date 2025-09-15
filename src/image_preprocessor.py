@@ -369,14 +369,15 @@ class EnhancedImagePreprocessor:
 
     def _process_regular_image(self, image_path: Path) -> str:
         """处理常规图像（原有逻辑）"""
-        cache_filename = self._generate_cache_filename(image_path)
-        cache_path = self.cache_dir / cache_filename
+        cache_path = self._generate_cache_path(image_path)
 
         if cache_path.exists():
             logger.debug(f"使用缓存图像: {cache_path}")
             return str(cache_path)
 
         try:
+            # 确保缓存目录存在
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
             processed_path = self._process_single_image(image_path, cache_path)
             logger.debug(f"图像预处理完成: {image_path} -> {processed_path}")
             return processed_path
@@ -517,7 +518,7 @@ class EnhancedImagePreprocessor:
         return img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
     def _generate_cache_filename(self, image_path: Path) -> str:
-        """生成缓存文件名"""
+        """生成缓存文件名，保持目录结构"""
         stat = image_path.stat()
         content = f"{image_path}_{stat.st_mtime}_{stat.st_size}"
         config_str = f"{self.config.max_resolution}_{self.config.quality}_{self.config.format}"
@@ -531,7 +532,59 @@ class EnhancedImagePreprocessor:
         else:
             ext = f'.{self.config.format.lower()}'
 
-        return f"{hash_str}{ext}"
+        # 保持相对路径结构，避免绝对路径中的特殊字符
+        relative_path = image_path
+        if image_path.is_absolute():
+            # 如果是绝对路径，尝试获取相对于当前工作目录的路径
+            try:
+                relative_path = image_path.relative_to(Path.cwd())
+            except ValueError:
+                # 如果无法获取相对路径，使用文件名和部分父目录
+                parts = image_path.parts
+                if len(parts) >= 2:
+                    relative_path = Path(*parts[-2:])  # 取最后两级目录
+                else:
+                    relative_path = image_path.name
+        
+        # 将路径转换为安全的缓存路径
+        safe_path = str(relative_path).replace('/', '_').replace('\\', '_').replace(':', '_')
+        return f"{safe_path}_{hash_str[:8]}{ext}"
+
+    def _generate_cache_path(self, image_path: Path) -> Path:
+        """生成缓存文件路径，保持目录结构"""
+        stat = image_path.stat()
+        content = f"{image_path}_{stat.st_mtime}_{stat.st_size}"
+        config_str = f"{self.config.max_resolution}_{self.config.quality}_{self.config.format}"
+        content += f"_{config_str}"
+
+        hash_obj = hashlib.md5(content.encode())
+        hash_str = hash_obj.hexdigest()[:8]  # 使用较短的哈希
+
+        if self.config.format.upper() == 'JPEG':
+            ext = '.jpg'
+        else:
+            ext = f'.{self.config.format.lower()}'
+
+        # 获取相对路径
+        relative_path = image_path
+        if image_path.is_absolute():
+            try:
+                relative_path = image_path.relative_to(Path.cwd())
+            except ValueError:
+                # 如果无法获取相对路径，使用文件名和部分父目录
+                parts = image_path.parts
+                if len(parts) >= 3:
+                    relative_path = Path(*parts[-3:])  # 取最后三级目录
+                elif len(parts) >= 2:
+                    relative_path = Path(*parts[-2:])  # 取最后两级目录
+                else:
+                    relative_path = Path(image_path.name)
+        
+        # 在缓存目录中保持相同的目录结构
+        cache_subdir = self.cache_dir / relative_path.parent
+        filename_with_hash = f"{relative_path.stem}_{hash_str}{ext}"
+        
+        return cache_subdir / filename_with_hash
 
     def _generate_tif_cache_key(self, tif_path: Path) -> str:
         """生成TIF缓存键"""

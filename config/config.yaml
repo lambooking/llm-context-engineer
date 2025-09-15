@@ -6,7 +6,7 @@ vlm:
   api_key: "sk-12"  # API密钥，建议使用环境变量
   base_url: "http://localhost:1237/v1"  # API基础URL
   model: "qwen2.5-vl-7b-instruct"  # 使用的模型
-  max_tokens: 8000  # 最大token数
+  max_tokens: 18000  # 最大token数
   temperature: 0  # 温度参数
 
 # Prompt配置
@@ -29,7 +29,7 @@ logging:
 
 # 批量处理配置
 batch_processing:
-  max_concurrent_requests: 3  # 最大并发请求数
+  max_concurrent_requests: 1  # 最大并发请求数
   request_interval: 5  # 请求间隔（秒）
   retry_attempts: 3  # 重试次数
   timeout: 600  # 请求超时时间（秒）
@@ -52,7 +52,7 @@ image_preprocessing:
 
 # 优化配置
 optimization:
-  batch_size: 3  # 每批次处理的查询数量
+  batch_size: 1  # 每批次处理的查询数量
   memory_cleanup_interval: 5  # 每N个批次执行内存清理
   progressive_processing: true  # 渐进式处理
   max_memory_usage: 75.0  # 最大内存使用率(%)

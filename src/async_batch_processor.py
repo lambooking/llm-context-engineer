@@ -236,7 +236,7 @@ class AsyncBatchProcessor:
             for img_path in original_images:
                 processed_result = self.preprocessing_pipeline.get_processed_result(
                     img_path, 
-                    timeout=30.0
+                    timeout=600.0
                 )
                 
                 if isinstance(processed_result, TifProcessResult):

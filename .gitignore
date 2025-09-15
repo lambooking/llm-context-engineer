@@ -1,6 +1,7 @@
 # Cache directories
 git cache/
 /cache
+/input_path
 # Python cache files
 __pycache__/
 *.py[cod]
