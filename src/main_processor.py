@@ -82,7 +82,8 @@ class LLMContextProcessor:
                 'answer': answer,
                 'images_count': len(images) if images else 0,
                 'usage': usage_info,
-                'raw_response': response
+                'raw_response': response,
+                'prompt': prompt  # 添加prompt信息
             }
             
             if not force_type:
@@ -258,6 +259,7 @@ class LLMContextProcessor:
                     'images_count': len(images) if images else 0,
                     'usage': usage_info if i == 0 else None,
                     'raw_response': response if i == 0 else None,
+                    'prompt': prompt,  # 添加prompt信息
                     'question_index': i,
                     'processing_time': processing_time
                 }

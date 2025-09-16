@@ -510,7 +510,7 @@ class AsyncBatchProcessor:
         type_to_folder = {
             '基础问答': 'QA',
             '图像描述': 'Image_caption',
-            '对照对比问答类/素异描述': 'Change_caption',
+            '对照对比问答类/差异描述': 'Change_caption',
             '图表分析/计算': 'QA'  # 图表分析归类到QA
         }
         
@@ -640,7 +640,7 @@ class AsyncBatchProcessor:
                         question_type=result.get('question_type', ''),
                         images=original_images,
                         processed_images=processed_images,
-                        prompt_used="",  # 多问题处理时的prompt
+                        prompt_used=result.get('prompt', ''),  # 多问题处理时的prompt
                         response=result.get('answer', ''),
                         success=result.get('success', False),
                         error=result.get('error'),
