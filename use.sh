@@ -1,1 +1,1 @@
-python batch_processor.py /nfs/samba/models/HJJ-VQA-data/input_path ~/repo/hjj/result3 --config config/config.yaml --log-level DEBUG
+python batch_processor.py /nfs/samba/models/HJJ-VQA-data/input_path ~/repo/hjj/result-7b-3 --config config/config.yaml --log-level DEBUG

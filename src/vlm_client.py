@@ -4,6 +4,7 @@ VLM API客户端模块 - 支持GPT-4V格式的API调用
 
 import base64
 import requests
+import time
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 from loguru import logger

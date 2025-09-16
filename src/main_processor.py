@@ -193,6 +193,130 @@ class LLMContextProcessor:
             'vlm_model': self.vlm_client.model,
             'vlm_base_url': self.vlm_client.base_url
         }
+    
+    def process_multi_questions(self, questions: List[str], images: List[str], 
+                               force_type: Optional[QuestionType] = None, **kwargs) -> List[Dict[str, Any]]:
+        """
+        处理多个问题（针对同一组图像）- 优化版本
+        
+        Args:
+            questions: 问题列表
+            images: 图像路径列表
+            force_type: 强制指定问题类型
+            **kwargs: 额外参数
+            
+        Returns:
+            List[Dict]: 每个问题的处理结果列表
+        """
+        import time
+        start_time = time.time()
+        results = []
+        
+        try:
+            logger.info(f"开始处理多问题查询，共 {len(questions)} 个问题")
+            
+            # 1. 问题分类（使用第一个问题进行分类）
+            if not force_type:
+                image_count = len(images) if images else 0
+                question_type = self.classifier.classify(questions[0], image_count)
+                confidence = self.classifier.get_confidence(questions[0], question_type)
+                logger.debug(f"问题分类结果: {question_type.value} (置信度: {confidence:.2f})")
+            else:
+                question_type = force_type
+                confidence = 1.0
+                logger.info(f"使用强制指定的问题类型: {question_type.value}")
+            
+            # 2. 组合所有问题为一个请求
+            combined_question = self._combine_questions(questions)
+            
+            # 3. 获取对应的Prompt
+            prompt = self.prompt_manager.get_prompt(question_type, question=combined_question)
+            logger.debug(f"使用Prompt模板: {question_type.value}")
+            
+            # 4. 调用VLM API
+            response = self.vlm_client.chat_completion(
+                prompt=prompt,
+                images=images,
+                **kwargs
+            )
+            
+            # 5. 提取和分割响应
+            full_answer = self.vlm_client.extract_response_text(response)
+            usage_info = self.vlm_client.get_usage_info(response)
+            
+            # 6. 分割答案
+            individual_answers = self._split_multi_answer(full_answer, len(questions))
+            
+            # 7. 为每个问题构建结果
+            processing_time = time.time() - start_time
+            for i, (question, answer) in enumerate(zip(questions, individual_answers)):
+                result = {
+                    'success': True,
+                    'question': question,
+                    'question_type': question_type.value,
+                    'answer': answer,
+                    'images_count': len(images) if images else 0,
+                    'usage': usage_info if i == 0 else None,
+                    'raw_response': response if i == 0 else None,
+                    'question_index': i,
+                    'processing_time': processing_time
+                }
+                
+                if not force_type and i == 0:
+                    result['classification_confidence'] = confidence
+                
+                results.append(result)
+            
+            logger.info(f"多问题查询处理完成，共处理 {len(questions)} 个问题")
+            return results
+            
+        except Exception as e:
+            logger.error(f"多问题查询处理失败: {e}")
+            processing_time = time.time() - start_time
+            for i, question in enumerate(questions):
+                results.append({
+                    'success': False,
+                    'question': question,
+                    'error': str(e),
+                    'question_index': i,
+                    'processing_time': processing_time,
+                    'images_count': len(images) if images else 0
+                })
+            return results
+    
+    def _combine_questions(self, questions: List[str]) -> str:
+        """将多个问题组合成一个请求"""
+        combined = "请回答以下问题：\n\n"
+        for i, question in enumerate(questions, 1):
+            combined += f"{i}. {question}\n"
+        combined += "\n请分别回答每个问题，用数字标号对应。"
+        return combined
+    
+    def _split_multi_answer(self, full_answer: str, num_questions: int) -> List[str]:
+        """分割多问题的答案"""
+        import re
+        
+        # 尝试按数字标号分割答案
+        pattern = r'(\d+)[\.、]\s*'
+        parts = re.split(pattern, full_answer)
+        
+        if len(parts) >= num_questions * 2:
+            answers = []
+            for i in range(1, num_questions * 2, 2):
+                if i + 1 < len(parts):
+                    answer = parts[i + 1].strip()
+                    # 清理答案，移除下一个数字标号前的内容
+                    next_num_match = re.search(r'\n\d+[\.、]\s*', answer)
+                    if next_num_match:
+                        answer = answer[:next_num_match.start()].strip()
+                    answers.append(answer)
+            
+            if len(answers) == num_questions:
+                return answers
+        
+        # 如果分割失败，将整个答案分配给所有问题
+        logger.warning("无法正确分割多问题答案，将完整答案分配给所有问题")
+        return [full_answer.strip()] * num_questions
 
 
 class ProcessorFactory:

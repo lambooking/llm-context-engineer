@@ -105,29 +105,34 @@ class InputParser:
         # 按编号配对
         for number in sorted(set(question_files.keys()) & set(image_files.keys())):
             try:
-                # 读取问题
-                question_content = self._read_text_file(question_files[number])
-                if not question_content.strip():
-                    logger.warning(f"问题文件为空: {question_files[number]}")
+                # 解析多问题文件
+                questions_data = self._parse_multi_question_file(question_files[number])
+                if not questions_data:
+                    logger.warning(f"问题文件解析失败或为空: {question_files[number]}")
                     continue
                 
                 # 获取对应的图像
                 images = [str(image_files[number])]
                 
+                # 将同一文件的所有问题组合成一个ParsedInput（优化：一次处理多个问题）
+                all_questions = [q_data['text_input'] for q_data in questions_data]
+                
                 parsed_input = ParsedInput(
                     question_type=question_type,
-                    questions=[question_content],
+                    questions=all_questions,  # 包含所有问题
                     images=[images],
                     metadata={
                         'source_dir': str(type_dir),
-                        'number': number,
-                        'question_file': str(question_files[number]),
-                        'image_files': images
+                        'file_number': number,
+                        'original_file': str(question_files[number]),
+                        'image_files': images,
+                        'all_questions_data': questions_data,  # 保存所有问题数据
+                        'is_multi_question': True  # 标记为多问题
                     }
                 )
                 
                 results.append(parsed_input)
-                logger.debug(f"解析完成: {type_dir.name}/{number}")
+                logger.debug(f"解析多问题文件: {type_dir.name}/{number} ({len(questions_data)} 个问题)")
                 
             except Exception as e:
                 logger.error(f"解析失败 {type_dir.name}/{number}: {e}")
@@ -160,29 +165,34 @@ class InputParser:
         
         for number in sorted(common_numbers):
             try:
-                # 读取问题
-                question_content = self._read_text_file(question_files[number])
-                if not question_content.strip():
-                    logger.warning(f"问题文件为空: {question_files[number]}")
+                # 解析多问题文件
+                questions_data = self._parse_multi_question_file(question_files[number])
+                if not questions_data:
+                    logger.warning(f"问题文件解析失败或为空: {question_files[number]}")
                     continue
                 
                 # 获取对应的图像对
                 images = [str(image1_files[number]), str(image2_files[number])]
                 
+                # 将同一文件的所有问题组合成一个ParsedInput（优化：一次处理多个问题）
+                all_questions = [q_data['text_input'] for q_data in questions_data]
+                
                 parsed_input = ParsedInput(
                     question_type=question_type,
-                    questions=[question_content],
+                    questions=all_questions,  # 包含所有问题
                     images=[images],
                     metadata={
                         'source_dir': str(type_dir),
-                        'number': number,
-                        'question_file': str(question_files[number]),
-                        'image_files': images
+                        'file_number': number,
+                        'original_file': str(question_files[number]),
+                        'image_files': images,
+                        'all_questions_data': questions_data,  # 保存所有问题数据
+                        'is_multi_question': True  # 标记为多问题
                     }
                 )
                 
                 results.append(parsed_input)
-                logger.debug(f"解析完成: {type_dir.name}/{number}")
+                logger.debug(f"解析多问题文件: {type_dir.name}/{number} ({len(questions_data)} 个问题)")
                 
             except Exception as e:
                 logger.error(f"解析失败 {type_dir.name}/{number}: {e}")
@@ -229,6 +239,49 @@ class InputParser:
                 with open(file_path, 'r', encoding='latin-1') as f:
                     return f.read().strip()
     
+    def _parse_multi_question_file(self, file_path: Path) -> List[Dict[str, Any]]:
+        """
+        解析多问题格式的文本文件
+        格式：
+        image_path: ......./0.tif
+        question_id: 0
+        text_input: 问题内容
+        text_truth:
+        question_id: 1
+        text_input: 另一个问题
+        text_truth:
+        ...
+        """
+        content = self._read_text_file(file_path)
+        questions = []
+        
+        lines = content.split('\n')
+        current_question = {}
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            if line.startswith('image_path:'):
+                current_question['image_path'] = line.split(':', 1)[1].strip()
+            elif line.startswith('question_id:'):
+                # 如果已经有问题在处理，保存它
+                if 'question_id' in current_question and 'text_input' in current_question:
+                    questions.append(current_question.copy())
+                
+                current_question['question_id'] = line.split(':', 1)[1].strip()
+            elif line.startswith('text_input:'):
+                current_question['text_input'] = line.split(':', 1)[1].strip()
+            elif line.startswith('text_truth:'):
+                current_question['text_truth'] = line.split(':', 1)[1].strip() if ':' in line and len(line.split(':', 1)) > 1 else ''
+        
+        # 添加最后一个问题
+        if 'question_id' in current_question and 'text_input' in current_question:
+            questions.append(current_question)
+        
+        return questions
+    
     def convert_to_queries(self, parsed_inputs: List[ParsedInput]) -> List[Dict[str, Any]]:
         """
         将解析结果转换为处理器可用的查询格式
@@ -242,17 +295,29 @@ class InputParser:
         queries = []
         
         for parsed_input in parsed_inputs:
-            for i, (question, images) in enumerate(zip(parsed_input.questions, parsed_input.images)):
+            if parsed_input.metadata.get('is_multi_question', False):
+                # 多问题情况：创建一个包含所有问题的查询
                 query = {
-                    'question': question,
-                    'images': images,
+                    'questions': parsed_input.questions,  # 多个问题
+                    'images': parsed_input.images[0],  # 图像列表
                     'force_type': parsed_input.question_type,
-                    'metadata': {
-                        **parsed_input.metadata,
-                        'sub_index': i
-                    }
+                    'metadata': parsed_input.metadata,
+                    'is_multi_question': True
                 }
                 queries.append(query)
+            else:
+                # 单问题情况：保持原有逻辑
+                for i, (question, images) in enumerate(zip(parsed_input.questions, parsed_input.images)):
+                    query = {
+                        'question': question,
+                        'images': images,
+                        'force_type': parsed_input.question_type,
+                        'metadata': {
+                            **parsed_input.metadata,
+                            'sub_index': i
+                        }
+                    }
+                    queries.append(query)
         
         return queries
     

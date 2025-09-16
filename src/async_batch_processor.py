@@ -289,9 +289,14 @@ class AsyncBatchProcessor:
             return await self._process_single_query_async(query, index)
     
     async def _process_single_query_async(self, query: Dict[str, Any], index: int) -> Dict[str, Any]:
-        """异步处理单个查询"""
+        """异步处理单个查询（支持多问题）"""
         start_time = time.time()
         
+        # 检查是否为多问题查询
+        if query.get('is_multi_question', False):
+            return await self._process_multi_question_query_async(query, index)
+        
+        # 单问题处理逻辑
         question = query['question']
         original_images = query['images']
         force_type = query.get('force_type')
@@ -531,15 +536,18 @@ class AsyncBatchProcessor:
             # 构建输出文件路径
             output_file = self.output_dir / folder_name / f"{file_number}.txt"
             
-            # 准备输出内容
+            # 准备输出内容 - 使用text_truth格式
             answer = result.get('answer', '').strip()
             if not answer:
                 answer = "处理失败，无法生成回答。"
             
+            # 使用text_truth格式
+            output_content = f"text_truth: {answer}"
+            
             # 保存为UTF-8编码的txt文件
             try:
                 with open(output_file, 'w', encoding='utf-8') as f:
-                    f.write(answer)
+                    f.write(output_content)
                 
                 logger.debug(f"保存比赛结果: {output_file}")
                 
@@ -552,6 +560,126 @@ class AsyncBatchProcessor:
             logger.info(f"  {folder_name}: {count} 个文件")
             
         return type_counters
+
+
+    async def _process_multi_question_query_async(self, query: Dict[str, Any], index: int) -> List[Dict[str, Any]]:
+        """异步处理多问题查询"""
+        start_time = time.time()
+        
+        questions = query['questions']
+        original_images = query['images']
+        force_type = query.get('force_type')
+        metadata = query.get('metadata', {})
+        
+        logger.debug(f"处理多问题查询 {index}: {len(questions)} 个问题")
+        
+        try:
+            # 等待图像预处理完成
+            processed_images = []
+            tif_results = []
+            
+            for img_path in original_images:
+                processed_result = self.preprocessing_pipeline.get_processed_result(
+                    img_path, 
+                    timeout=600.0
+                )
+                
+                if isinstance(processed_result, TifProcessResult):
+                    processed_images.append(processed_result.resized_image_path)
+                    tif_results.append(processed_result)
+                    logger.debug(f"TIF图像处理完成: {img_path} -> {len(processed_result.tiles)} 个切片")
+                else:
+                    processed_images.append(str(processed_result))
+                    tif_results.append(None)
+            
+            # 调用多问题处理方法
+            results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.processor.process_multi_questions,
+                questions,
+                processed_images,
+                force_type
+            )
+            
+            # 为每个结果添加元数据和TIF信息
+            for i, result in enumerate(results):
+                extended_metadata = {**metadata}
+                
+                # 添加问题特定的元数据
+                all_questions_data = metadata.get('all_questions_data', [])
+                if i < len(all_questions_data):
+                    extended_metadata.update({
+                        'question_id': all_questions_data[i]['question_id'],
+                        'original_content': all_questions_data[i]
+                    })
+                
+                # 添加TIF处理信息
+                tif_info = []
+                for j, tif_result in enumerate(tif_results):
+                    if tif_result:
+                        tif_info.append({
+                            'original_path': original_images[j],
+                            'resized_path': tif_result.resized_image_path,
+                            'tiles_count': len(tif_result.tiles),
+                            'processing_time': tif_result.processing_time,
+                            'json_path': tif_result.json_path
+                        })
+                
+                result.update({
+                    'metadata': extended_metadata,
+                    'tif_processing_info': tif_info,
+                    'original_images': original_images,
+                    'processed_images': processed_images
+                })
+                
+                # 记录对话
+                if self.batch_config.save_conversations:
+                    conversation = ConversationRecord(
+                        timestamp=datetime.now().isoformat(),
+                        question=result['question'],
+                        question_type=result.get('question_type', ''),
+                        images=original_images,
+                        processed_images=processed_images,
+                        prompt_used="",  # 多问题处理时的prompt
+                        response=result.get('answer', ''),
+                        success=result.get('success', False),
+                        error=result.get('error'),
+                        usage=result.get('usage'),
+                        processing_time=result.get('processing_time', 0.0),
+                        metadata=extended_metadata
+                    )
+                    self.conversations.append(conversation)
+            
+            logger.info(f"多问题查询 {index} 处理完成，共 {len(results)} 个问题")
+            return results
+            
+        except Exception as e:
+            logger.error(f"多问题查询 {index} 处理失败: {e}")
+            processing_time = time.time() - start_time
+            
+            # 为所有问题创建错误结果
+            error_results = []
+            for i, question in enumerate(questions):
+                extended_metadata = {**metadata}
+                all_questions_data = metadata.get('all_questions_data', [])
+                if i < len(all_questions_data):
+                    extended_metadata.update({
+                        'question_id': all_questions_data[i]['question_id'],
+                        'original_content': all_questions_data[i]
+                    })
+                
+                error_result = {
+                    'success': False,
+                    'question': question,
+                    'error': str(e),
+                    'question_index': i,
+                    'processing_time': processing_time,
+                    'metadata': extended_metadata,
+                    'original_images': original_images
+                }
+                error_results.append(error_result)
+            
+            return error_results
 
 
 def create_async_processor_from_config(config_path: str = "config/config.yaml") -> AsyncBatchProcessor:

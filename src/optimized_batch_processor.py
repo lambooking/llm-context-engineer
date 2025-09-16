@@ -7,9 +7,10 @@ import asyncio
 import json
 import time
 import gc
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
 import yaml
 import math
@@ -60,6 +61,10 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
         
         # 批次计数器
         self.batch_counter = 0
+        
+        # 文件写入锁（避免多个问题同时写入同一文件）
+        self.file_locks = {}
+        self.locks_lock = threading.Lock()
         
         logger.info("优化版异步批量处理器初始化完成")
         logger.info(f"批次大小: {self.optimized_config.batch_size}")
@@ -175,8 +180,8 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             'timestamp': datetime.now().isoformat()
         }
         
-        # 保存结果
-        await self._save_results(summary, all_results)
+        # 保存汇总结果（不包含重复的比赛结果文件，因为已经流式保存了）
+        await self._save_summary_results(summary, all_results)
         
         logger.info(f"优化批量处理完成: {total_success}/{len(queries)} 成功，用时 {processing_time:.2f}秒")
         return summary
@@ -227,7 +232,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
                         'success': False,
                         'error': str(result),
                         'query_index': query_index,
-                        'question': batch_queries[i].get('question', ''),
+                        'question': batch_queries[i].get('question', batch_queries[i].get('questions', [''])[0]),
                         'processing_time': 0.0,
                         'metadata': batch_queries[i].get('metadata', {})
                     }
@@ -240,39 +245,261 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
                     else:
                         self._display_single_result(error_result, query_index)
                 else:
-                    # 处理成功结果
-                    processed_results[i] = result
-                    
-                    # 显示成功结果
-                    if progress_callback:
-                        await progress_callback(result, query_index, len(tasks))
+                    # 检查是否为多问题结果（返回列表）
+                    if isinstance(result, list):
+                        # 多问题结果：保存和显示每个问题的结果
+                        for sub_result in result:
+                            await self._save_single_result(sub_result, query_index)
+                            
+                            if progress_callback:
+                                await progress_callback(sub_result, query_index, len(tasks))
+                            else:
+                                self._display_single_result(sub_result, query_index)
+                        
+                        # 将第一个结果作为主要结果保存到processed_results中
+                        if result:
+                            processed_results[i] = result[0]
+                        else:
+                            # 创建完整的错误结果
+                            processed_results[i] = {
+                                'success': False,
+                                'error': '多问题处理返回空结果',
+                                'query_index': query_index,
+                                'question': batch_queries[i].get('question', batch_queries[i].get('questions', [''])[0]) if batch_queries[i] else '',
+                                'processing_time': 0.0,
+                                'metadata': batch_queries[i].get('metadata', {}) if batch_queries[i] else {}
+                            }
                     else:
-                        self._display_single_result(result, query_index)
+                        # 单问题结果
+                        processed_results[i] = result
+                        
+                        # 立即保存成功结果（流式保存）
+                        await self._save_single_result(result, query_index)
+                        
+                        # 显示成功结果
+                        if progress_callback:
+                            await progress_callback(result, query_index, len(tasks))
+                        else:
+                            self._display_single_result(result, query_index)
                         
         except Exception as e:
+            import traceback
             logger.error(f"批次处理完全失败: {e}")
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            
             # 创建所有错误结果
             for i in range(len(tasks)):
                 query_index = batch_idx * self.optimized_config.batch_size + i
+                
+                # 安全地获取查询信息
+                try:
+                    if i < len(batch_queries) and batch_queries[i]:
+                        query = batch_queries[i]
+                        question = query.get('question', query.get('questions', [''])[0] if query.get('questions') else '')
+                        metadata = query.get('metadata', {})
+                    else:
+                        question = f'查询 {i} (无效)'
+                        metadata = {}
+                except Exception as query_error:
+                    logger.error(f"获取查询 {i} 信息失败: {query_error}")
+                    question = f'查询 {i} (获取失败)'
+                    metadata = {}
+                
                 error_result = {
                     'success': False,
                     'error': f"批次处理失败: {str(e)}",
                     'query_index': query_index,
-                    'question': batch_queries[i].get('question', ''),
+                    'question': question,
                     'processing_time': 0.0,
-                    'metadata': batch_queries[i].get('metadata', {})
+                    'metadata': metadata
                 }
                 processed_results[i] = error_result
         
         return processed_results
     
+    async def _save_single_result(self, result: Dict[str, Any], query_index: int):
+        """立即保存单个结果（流式保存）- 支持多问题格式"""
+        try:
+            # 检查result是否有效
+            if not result or not isinstance(result, dict):
+                logger.error(f"无效的结果对象 {query_index}: {result}")
+                return
+                
+            # 检查是否成功，但对于多问题处理，即使失败也要保存错误信息
+            if not result.get('success', False):
+                logger.warning(f"查询 {query_index} 处理失败，但仍尝试保存: {result.get('error', '未知错误')}")
+        
+            metadata = result.get('metadata', {})
+            if not metadata:
+                logger.error(f"查询 {query_index} 缺少metadata")
+                return
+            
+            # 获取原始文件信息
+            file_number = metadata.get('file_number', query_index)
+            question_id = metadata.get('question_id', '0')
+            source_dir = metadata.get('source_dir', '')
+            
+            # 确定文件夹
+            folder_name = Path(source_dir).name if source_dir else 'QA'
+            
+            # 创建子文件夹
+            folder_path = self.output_dir / folder_name
+            folder_path.mkdir(exist_ok=True)
+            
+            # 使用原始文件编号
+            output_file = folder_path / f"{file_number}.txt"
+            
+            # 获取答案
+            answer = result.get('answer', '').strip()
+            if not answer:
+                if result.get('success', False):
+                    answer = "处理成功但无回答内容。"
+                else:
+                    answer = f"处理失败: {result.get('error', '未知错误')}"
+            
+            # 获取文件锁
+            file_key = str(output_file)
+            with self.locks_lock:
+                if file_key not in self.file_locks:
+                    self.file_locks[file_key] = threading.Lock()
+                file_lock = self.file_locks[file_key]
+            
+            # 使用文件锁确保线程安全
+            with file_lock:
+                # 检查文件是否已存在，如果存在需要更新对应的问题
+                if output_file.exists():
+                    # 读取现有内容
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        existing_content = f.read()
+                    
+                    # 更新对应question_id的text_truth
+                    updated_content = self._update_question_answer(existing_content, question_id, answer)
+                else:
+                    # 创建新文件，需要重建完整格式
+                    updated_content = self._create_full_file_content(metadata, answer)
+                
+                # 保存更新后的内容
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(updated_content)
+            
+            logger.debug(f"流式保存结果: {output_file} (question_id: {question_id})")
+            
+        except Exception as e:
+            logger.error(f"流式保存结果失败 {query_index}: {e}")
+    
+    def _update_question_answer(self, content: str, target_question_id: str, answer: str) -> str:
+        """更新文件中指定问题的答案"""
+        lines = content.split('\n')
+        updated_lines = []
+        current_question_id = None
+        
+        for line in lines:
+            if line.strip().startswith('question_id:'):
+                current_question_id = line.split(':', 1)[1].strip()
+                updated_lines.append(line)
+            elif line.strip().startswith('text_truth:') and current_question_id == target_question_id:
+                # 更新这个问题的答案
+                updated_lines.append(f"text_truth: {answer}")
+            else:
+                updated_lines.append(line)
+        
+        return '\n'.join(updated_lines)
+    
+    def _create_full_file_content(self, metadata: Dict[str, Any], answer: str) -> str:
+        """创建完整的文件内容（当文件不存在时）"""
+        # 获取所有问题数据
+        all_questions_data = metadata.get('all_questions_data', [])
+        current_question_id = metadata.get('question_id', '0')
+        
+        if not all_questions_data:
+            # 如果没有完整的问题数据，创建单问题格式
+            original_content = metadata.get('original_content', {})
+            lines = []
+            if 'image_path' in original_content:
+                lines.append(f"image_path: {original_content['image_path']}")
+            
+            lines.extend([
+                f"question_id: {current_question_id}",
+                f"text_input: {original_content.get('text_input', '')}",
+                f"text_truth: {answer}"
+            ])
+            return '\n'.join(lines)
+        
+        # 创建包含所有问题的完整文件
+        lines = []
+        
+        # 添加图像路径（从第一个问题获取）
+        if all_questions_data and 'image_path' in all_questions_data[0]:
+            lines.append(f"image_path: {all_questions_data[0]['image_path']}")
+        
+        # 添加所有问题
+        for q_data in all_questions_data:
+            lines.extend([
+                f"question_id: {q_data['question_id']}",
+                f"text_input: {q_data['text_input']}",
+                f"text_truth: {answer if q_data['question_id'] == current_question_id else ''}"
+            ])
+        
+        return '\n'.join(lines)
+    
+    async def _save_summary_results(self, summary: Dict[str, Any], results: List[Dict[str, Any]]):
+        """保存汇总结果（不包含比赛结果文件，因为已经流式保存）"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 保存主要结果
+        results_file = self.output_dir / f"batch_results_{timestamp}.json"
+        output_data = {
+            'summary': summary,
+            'results': results
+        }
+        
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"批量处理结果已保存: {results_file}")
+        
+        # 保存对话记录
+        if self.optimized_config.save_conversations:
+            conversations_file = self.output_dir / f"conversations_{timestamp}.json"
+            conversations_data = {
+                'metadata': {
+                    'total_conversations': len(self.conversations),
+                    'timestamp': datetime.now().isoformat(),
+                    'processing_summary': summary
+                },
+                'conversations': [asdict(conv) for conv in self.conversations]
+            }
+            
+            with open(conversations_file, 'w', encoding='utf-8') as f:
+                json.dump(conversations_data, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"对话记录已保存: {conversations_file}")
+        
+        # 保存图像预处理缓存信息
+        cache_info = self.image_preprocessor.get_cache_info()
+        cache_info_file = self.output_dir / f"cache_info_{timestamp}.json"
+        
+        with open(cache_info_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_info, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"缓存信息已保存: {cache_info_file}")
+        logger.info("注意: 比赛结果文件已通过流式保存实时生成")
+    
     def _display_single_result(self, result: Dict[str, Any], query_index: int):
         """显示单个查询结果（流式输出）"""
+        if not result or not isinstance(result, dict):
+            print(f"\n{'='*60}")
+            print(f"查询 #{query_index + 1} 错误")
+            print(f"{'='*60}")
+            print(f"❌ 无效的结果对象: {result}")
+            print(f"{'='*60}")
+            return
+            
         print(f"\n{'='*60}")
         print(f"查询 #{query_index + 1} 完成")
         print(f"{'='*60}")
         
-        if result['success']:
+        if result.get('success', False):
             print(f"问题: {result.get('question', 'N/A')}")
             print(f"问题类型: {result.get('question_type', 'N/A')}")
             print(f"图像数量: {result.get('images_count', 0)}")
@@ -284,7 +511,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             print(f"\n回答:")
             print(f"{result.get('answer', 'N/A')}")
             
-            if 'usage' in result:
+            if 'usage' in result and result['usage']:
                 usage = result['usage']
                 print(f"\nToken使用:")
                 print(f"  输入: {usage.get('prompt_tokens', 0)}")
