@@ -204,47 +204,65 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
         tasks = []
         for i, query in enumerate(batch_queries):
             query_index = batch_idx * self.optimized_config.batch_size + i
-            task = self._process_single_query_with_throttle(throttler, query, query_index)
+            # 正确创建任务对象而不是直接使用协程
+            task = asyncio.create_task(self._process_single_query_with_throttle(throttler, query, query_index))
             tasks.append(task)
         
-        # 流式处理：使用as_completed逐个处理完成的任务
-        processed_results = [None] * len(tasks)  # 保持原始顺序
-        task_to_index = {task: i for i, task in enumerate(tasks)}
+        # 改用更可靠的方式：直接使用gather处理所有任务
+        processed_results = [None] * len(tasks)
         
-        for completed_task in asyncio.as_completed(tasks):
-            try:
-                result = await completed_task
-                task_index = task_to_index[completed_task]
-                query_index = batch_idx * self.optimized_config.batch_size + task_index
+        try:
+            logger.debug(f"开始处理 {len(tasks)} 个任务...")
+            
+            # 使用gather等待所有任务，并处理异常
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # 处理结果并实时显示
+            for i, result in enumerate(results):
+                query_index = batch_idx * self.optimized_config.batch_size + i
                 
-                processed_results[task_index] = result
-                
-                # 立即显示结果（流式输出）
-                if progress_callback:
-                    await progress_callback(result, query_index, len(tasks))
-                else:
-                    self._display_single_result(result, query_index)
+                if isinstance(result, Exception):
+                    # 处理异常结果
+                    error_result = {
+                        'success': False,
+                        'error': str(result),
+                        'query_index': query_index,
+                        'question': batch_queries[i].get('question', ''),
+                        'processing_time': 0.0,
+                        'metadata': batch_queries[i].get('metadata', {})
+                    }
+                    processed_results[i] = error_result
+                    logger.error(f"查询 {query_index} 处理异常: {result}")
                     
-            except Exception as e:
-                task_index = task_to_index[completed_task]
-                query_index = batch_idx * self.optimized_config.batch_size + task_index
-                logger.error(f"查询 {query_index} 处理异常: {e}")
-                
+                    # 显示错误结果
+                    if progress_callback:
+                        await progress_callback(error_result, query_index, len(tasks))
+                    else:
+                        self._display_single_result(error_result, query_index)
+                else:
+                    # 处理成功结果
+                    processed_results[i] = result
+                    
+                    # 显示成功结果
+                    if progress_callback:
+                        await progress_callback(result, query_index, len(tasks))
+                    else:
+                        self._display_single_result(result, query_index)
+                        
+        except Exception as e:
+            logger.error(f"批次处理完全失败: {e}")
+            # 创建所有错误结果
+            for i in range(len(tasks)):
+                query_index = batch_idx * self.optimized_config.batch_size + i
                 error_result = {
                     'success': False,
-                    'error': str(e),
+                    'error': f"批次处理失败: {str(e)}",
                     'query_index': query_index,
-                    'question': batch_queries[task_index].get('question', ''),
+                    'question': batch_queries[i].get('question', ''),
                     'processing_time': 0.0,
-                    'metadata': batch_queries[task_index].get('metadata', {})
+                    'metadata': batch_queries[i].get('metadata', {})
                 }
-                processed_results[task_index] = error_result
-                
-                # 显示错误结果
-                if progress_callback:
-                    await progress_callback(error_result, query_index, len(tasks))
-                else:
-                    self._display_single_result(error_result, query_index)
+                processed_results[i] = error_result
         
         return processed_results
     

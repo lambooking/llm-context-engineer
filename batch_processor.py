@@ -127,16 +127,16 @@ async def process_batch_async(input_path: str, output_path: str = None, config_p
             processor = AsyncBatchProcessor(final_config_path)
             logger.info("使用标准版批量处理器")
         
-        # 清理临时配置文件
-        if temp_config_path and os.path.exists(temp_config_path):
-            os.remove(temp_config_path)
-        
         logger.info("异步批量处理器初始化完成")
         logger.info(f"输入路径: {input_path}")
         logger.info(f"输出路径: {output_path or processor.output_dir}")
         
         # 处理输入目录
         summary = await processor.process_input_directory(input_path)
+        
+        # 在处理完成后清理临时配置文件
+        if temp_config_path and os.path.exists(temp_config_path):
+            os.remove(temp_config_path)
         
         if summary['success']:
             print(f"\n=== 异步批量处理完成 ===")
