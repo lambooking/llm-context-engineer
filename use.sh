@@ -1,1 +1,1 @@
- python batch_processor.py /workspace/input_path  ~/workspace/output/result-7b-6 --config config/config.yaml --log-level DEBUG
+ python batch_processor.py /workspace/input_path  /workspace/output/result-7b-6 --config config/config.yaml --log-level DEBUG
