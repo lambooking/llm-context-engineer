@@ -53,3 +53,6 @@ image_preprocessing:
   target_tile_size: 1080  # 切片目标尺寸，同max_resolution
 optimization:
   batch_size: 5  # 每批次处理的查询数量,可以调整大
+# 日志配置
+logging:
+  file: "/workspace/output/logs/app.log"  # 日志文件路径

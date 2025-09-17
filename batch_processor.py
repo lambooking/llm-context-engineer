@@ -187,8 +187,20 @@ def main():
     
     args = parser.parse_args()
     
+    # 读取配置文件中的日志设置
+    log_file = args.log_file
+    if not log_file and args.config:
+        try:
+            import yaml
+            with open(args.config, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            if config and 'logging' in config and 'file' in config['logging']:
+                log_file = config['logging']['file']
+        except Exception as e:
+            logger.warning(f"读取配置文件中的日志设置失败: {e}")
+    
     # 设置日志
-    setup_logging(args.log_level, args.log_file)
+    setup_logging(args.log_level, log_file)
     
     print("=== LLM Context Engineer 批量处理器 ===")
     print(f"输入路径: {args.input_path}")
