@@ -31,3 +31,5 @@ RUN pip install -r requirements.txt \
     huggingface-hub \
     transformers \
     sentencepiece
+
+ENTRYPOINT ["/bin/bash", "/workspace/vllm.sh"]
