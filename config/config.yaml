@@ -5,7 +5,7 @@ vlm:
   provider: "openai"  # 服务提供商: openai, azure, 或其他
   api_key: "sk-12"  # API密钥，建议使用环境变量
   base_url: "http://localhost:1238/v1"  # API基础URL
-  model: "glm-4.5v"  # 使用的模型
+  model: "qwen-vl"  # 使用的模型
   max_tokens: 30000  # 最大token数
   temperature: 0  # 温度参数
 
@@ -38,7 +38,7 @@ batch_processing:
 # 图像预处理配置
 image_preprocessing:
   enabled: true  # 是否启用图像预处理
-  max_resolution: [2048, 2048]  # 最大分辨率 [width, height]
+  max_resolution: [1080,1080]  # 最大分辨率 [width, height]
   quality: 85  # JPEG压缩质量
   format: "JPEG"  # 输出格式
   cache_dir: "cache/processed_images"  # 预处理缓存目录
@@ -46,18 +46,18 @@ image_preprocessing:
   
   # TIF图像处理配置
   tif_processing_enabled: true  # 是否启用TIF处理
-  target_tile_size: 2048  # 切片目标尺寸
+  target_tile_size: 1080  # 切片目标尺寸
   grid_rows: 3  # 网格行数
   grid_cols: 3  # 网格列数
   tif_jpeg_quality: 95  # TIF转换JPEG质量
 
 # 优化配置
 optimization:
-  batch_size: 1  # 每批次处理的查询数量
+  batch_size: 5  # 每批次处理的查询数量
   memory_cleanup_interval: 5  # 每N个批次执行内存清理
   progressive_processing: true  # 渐进式处理
   max_memory_usage: 75.0  # 最大内存使用率(%)
-  image_batch_size: 2  # 图像预处理批次大小
+  image_batch_size: 5  # 图像预处理批次大小
 
 # 应用配置
 app:

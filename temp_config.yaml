@@ -1,0 +1,50 @@
+app:
+  debug: false
+  name: LLM Context Engineer
+  version: 1.0.0
+batch_processing:
+  max_concurrent_requests: 8
+  output_dir: /root/workspace/output/result-7b-6
+  request_interval: 3
+  retry_attempts: 3
+  streaming_output: true
+  timeout: 600
+classifier:
+  confidence_threshold: 0.3
+  enable_multi_image_detection: true
+image_preprocessing:
+  cache_dir: cache/processed_images
+  enabled: true
+  format: JPEG
+  grid_cols: 3
+  grid_rows: 3
+  max_resolution:
+  - 1080
+  - 1080
+  parallel_workers: 4
+  quality: 85
+  target_tile_size: 1080
+  tif_jpeg_quality: 95
+  tif_processing_enabled: true
+logging:
+  file: logs/app.log
+  format: '{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}'
+  level: INFO
+  retention: 7 days
+  rotation: 10 MB
+optimization:
+  batch_size: 5
+  image_batch_size: 5
+  max_memory_usage: 75.0
+  memory_cleanup_interval: 5
+  progressive_processing: true
+prompts:
+  auto_reload: false
+  dir: prompts
+vlm:
+  api_key: sk-12
+  base_url: http://localhost:1238/v1
+  max_tokens: 30000
+  model: qwen-vl
+  provider: openai
+  temperature: 0
