@@ -1,1 +1,3 @@
- python batch_processor.py /workspace/input_path  /workspace/output/result-7b-6 --config config/config.yaml --log-level DEBUG
+ #!/bin/bash
+# 比赛用统一启动脚本入口
+python run_competition.py "$1" "$2" --config config/config.yaml

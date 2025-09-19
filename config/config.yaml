@@ -9,6 +9,15 @@ vlm:
   max_tokens: 30000  # 最大token数
   temperature: 0  # 温度参数
 
+# vLLM服务器配置
+vllm_server:
+  model_path: "/workspace/models/Qwen_Qwen2.5-VL-7B-Instruct/Qwen/Qwen2___5-VL-7B-Instruct"  # 模型路径
+  served_model_name: "qwen-vl"  # 服务模型名称
+  port: 1238  # 服务端口
+  gpu_memory_utilization: 0.8  # GPU内存使用率
+  tensor_parallel_size: 1  # 张量并行大小
+  cuda_visible_devices: "4"  # 可见CUDA设备
+
 # Prompt配置
 prompts:
   dir: "prompts"  # Prompt文件目录
