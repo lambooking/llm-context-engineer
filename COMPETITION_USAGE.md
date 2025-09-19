@@ -1,171 +1,114 @@
-# LLM Context Engineer - 比赛使用说明
+# 比赛用统一启动脚本使用说明
 
-## 快速开始
+## 概述
 
-### 1. 环境准备
+本脚本为比赛专用的统一启动脚本，集成了vLLM服务启动和批量处理功能。一个脚本完成所有操作，满足比赛要求。
 
-```bash
-# 安装依赖
-pip install -r requirements.txt
+## 使用方法
 
-# 配置API密钥
-cp env.example .env
-# 编辑.env文件，设置你的VLM API密钥
-```
-
-### 2. 输入数据格式
-
-输入数据必须按照以下目录结构组织：
-
-```
-input_data/
-├── QA/
-│   ├── image/
-│   │   ├── 0.tif
-│   │   ├── 1.tif
-│   │   └── ...
-│   └── question/
-│       ├── 0.txt
-│       ├── 1.txt
-│       └── ...
-├── Image_caption/
-│   ├── image/
-│   │   ├── 0.png
-│   │   ├── 1.png
-│   │   └── ...
-│   └── question/
-│       ├── 0.txt
-│       ├── 1.txt
-│       └── ...
-└── Change_caption/
-    ├── image1/
-    │   ├── 0.png
-    │   ├── 1.png
-    │   └── ...
-    ├── image2/
-    │   ├── 0.png
-    │   ├── 1.png
-    │   └── ...
-    └── question/
-        ├── 0.txt
-        ├── 1.txt
-        └── ...
-```
-
-### 3. 运行批量处理
+### 基本用法
 
 ```bash
-# 基本用法
-python batch_processor.py /path/to/input_data /path/to/output_path
-
-# 预览模式（不调用API）
-python batch_processor.py /path/to/input_data /path/to/output_path --dry-run
-
-# 仅验证输入结构
-python batch_processor.py /path/to/input_data /path/to/output_path --validate
-
-# 指定配置文件
-python batch_processor.py /path/to/input_data /path/to/output_path --config config/config.yaml
-
-# 调试模式
-python batch_processor.py /path/to/input_data /path/to/output_path --log-level DEBUG
+./use.sh <输入文件路径> <输出文件路径>
 ```
 
-### 4. 输出结果
+### 参数说明
 
-程序会在指定的输出路径下创建以下结构：
+- `输入文件路径`: 待处理的输入数据路径
+- `输出文件路径`: 处理结果的输出路径
 
-```
-output_path/
-├── QA/
-│   ├── 0.txt      # 基础问答和图表分析结果
-│   ├── 1.txt
-│   └── ...
-├── Image_caption/
-│   ├── 0.txt      # 图像描述结果
-│   ├── 1.txt
-│   └── ...
-├── Change_caption/
-│   ├── 0.txt      # 对比分析结果
-│   ├── 1.txt
-│   └── ...
-├── batch_results_20240910_143022.json    # 详细处理结果
-├── conversations_20240910_143022.json    # 对话记录
-└── cache_info_20240910_143022.json       # 缓存信息
+### 示例
+
+```bash
+# 处理输入数据并输出到指定位置
+./use.sh /workspace/input_path /workspace/output/result-7b-7
+
+# 或者使用完整路径
+./use.sh /home/user/input /home/user/output/results
 ```
 
-**重要说明**：
-- 所有txt文件均为UTF-8编码
-- 文件编号从0开始，按处理顺序递增
-- QA文件夹包含基础问答和图表分析的结果
-- 失败的查询不会生成txt文件
+## 脚本功能
 
-### 5. 配置说明
+1. **自动启动vLLM服务**: 根据配置文件自动启动vLLM OpenAI API服务器
+2. **健康检查**: 等待服务启动完成并进行健康检查
+3. **批量处理**: 运行批量处理器处理输入数据
+4. **自动清理**: 处理完成后自动关闭vLLM服务
 
-主要配置项（`config/config.yaml`）：
+## 配置文件
+
+配置文件位于 `config/config.yaml`，包含以下vLLM服务配置：
 
 ```yaml
-# VLM服务配置
-vlm:
-  provider: "openai"
-  api_key: "${VLM_API_KEY}"
-  model: "gpt-4-vision-preview"
-  max_tokens: 4000
-
-# 批量处理配置
-batch_processing:
-  max_concurrent_requests: 5    # 并发数量
-  request_interval: 0.1         # 请求间隔
-  retry_attempts: 3             # 重试次数
-
-# 图像预处理配置
-image_preprocessing:
-  enabled: true
-  max_resolution: [2048, 2048]  # 最大分辨率
-  quality: 85                   # JPEG质量
-  
-  # TIF遥感图像处理
-  tif_processing_enabled: true  # 启用TIF处理
-  target_tile_size: 2048        # 切片尺寸
-  grid_rows: 3                  # 网格行数
-  grid_cols: 3                  # 网格列数
-  tif_jpeg_quality: 95          # TIF转换质量
+vllm_server:
+  model_path: "/workspace/models/Qwen_Qwen2.5-VL-7B-Instruct/Qwen/Qwen2___5-VL-7B-Instruct"
+  served_model_name: "qwen-vl"
+  port: 1238
+  gpu_memory_utilization: 0.8
+  tensor_parallel_size: 1
+  cuda_visible_devices: "4"
 ```
 
-### 6. 常见问题
+### 配置参数说明
 
-**Q: 如何处理大分辨率遥感图像？**
-A: 系统专门支持TIF遥感图像处理：
-- 自动检测TIF格式文件
-- 将大TIF图像切分为3x3网格的切片
-- 生成处理后的整图和详细的切片信息
-- 支持缓存机制，避免重复处理相同图像
+- `model_path`: 模型文件路径
+- `served_model_name`: 服务中的模型名称
+- `port`: API服务端口
+- `gpu_memory_utilization`: GPU内存使用率
+- `tensor_parallel_size`: 张量并行大小
+- `cuda_visible_devices`: 可见的CUDA设备编号
 
-**Q: 如何控制并发数量？**
-A: 在配置文件中修改`batch_processing.max_concurrent_requests`参数。
+## 日志输出
 
-**Q: 处理失败怎么办？**
-A: 系统会自动重试，失败的查询会记录在日志中，可以检查具体错误信息。
+脚本运行时会输出详细的日志信息，包括：
 
-**Q: 如何查看详细的处理日志？**
-A: 使用`--log-level DEBUG --log-file logs/debug.log`参数。
+- vLLM服务启动状态
+- 服务健康检查结果
+- 批量处理进度
+- 错误信息和调试信息
 
-### 7. 性能优化建议
+## 注意事项
 
-1. **并发设置**: 根据API服务的限制调整并发数量
-2. **图像预处理**: 启用预处理可以减少API调用时间
-3. **缓存利用**: 相同的图像会自动使用缓存，避免重复处理
-4. **批量处理**: 一次处理多个任务比单独处理更高效
+1. **环境要求**: 确保已安装vLLM和相关依赖
+2. **模型路径**: 确保配置文件中的模型路径正确
+3. **端口占用**: 确保配置的端口未被占用
+4. **GPU资源**: 确保有足够的GPU内存
+5. **权限**: 确保脚本有执行权限 (`chmod +x use.sh`)
 
-### 8. 故障排除
+## 错误排查
 
-```bash
-# 检查输入格式
-python batch_processor.py /path/to/input --validate
+### 常见问题
 
-# 预览处理内容
-python batch_processor.py /path/to/input /path/to/output --dry-run
+1. **服务启动失败**
+   - 检查模型路径是否正确
+   - 检查GPU内存是否足够
+   - 检查端口是否被占用
 
-# 查看详细日志
-python batch_processor.py /path/to/input /path/to/output --log-level DEBUG
-```
+2. **处理失败**
+   - 检查输入路径是否存在
+   - 检查输出目录是否有写权限
+   - 查看详细日志信息
+
+3. **权限问题**
+   ```bash
+   chmod +x use.sh
+   ```
+
+## 技术细节
+
+脚本内部流程：
+
+1. 解析命令行参数
+2. 加载配置文件
+3. 设置CUDA环境变量
+4. 启动vLLM服务器进程
+5. 等待服务启动完成
+6. 运行批量处理器
+7. 自动清理和关闭服务
+
+## 支持
+
+如有问题，请检查：
+1. 配置文件格式是否正确
+2. 模型和输入文件是否存在
+3. 系统资源是否充足
+4. 日志输出中的错误信息
