@@ -48,8 +48,14 @@ class PromptManager:
                 # 查找prompt标签
                 prompt_element = root.find('prompt')
                 if prompt_element is not None:
-                    self.prompts[question_type] = prompt_element.text.strip()
-                    logger.debug(f"加载Prompt: {question_type.value}")
+                    # 使用itertext聚合文本，兼容嵌套标签与换行
+                    prompt_text = ''.join(prompt_element.itertext()).strip() if prompt_element is not None else ''
+                    if prompt_text:
+                        self.prompts[question_type] = prompt_text
+                        logger.info(f"从XML加载Prompt: {filepath}")
+                    else:
+                        logger.warning(f"XML文件 {filename} 的<prompt>内容为空")
+                        self._create_default_prompt(question_type)
                 else:
                     logger.warning(f"XML文件 {filename} 中未找到prompt标签")
                     self._create_default_prompt(question_type)
@@ -163,13 +169,38 @@ class PromptManager:
         prompt_template = self.prompts.get(question_type)
         if not prompt_template:
             logger.warning(f"未找到类型 {question_type.value} 的Prompt")
-            return "请回答用户的问题。"
+            # 基础回退：尽量包含传入的问题，避免信息缺失
+            fallback = "请回答用户的问题。"
+            question_text = kwargs.get("question")
+            if question_text:
+                return f"{fallback}\n\n{question_text}"
+            return fallback
         
+        formatted = prompt_template
+        appended_question = False
         try:
-            return prompt_template.format(**kwargs)
+            # 正常格式化（若模板包含 {question} 等占位）
+            formatted = prompt_template.format(**kwargs)
         except KeyError as e:
+            # 缺少参数时，降级为不格式化的模板
             logger.warning(f"Prompt格式化失败，缺少参数: {e}")
-            return prompt_template
+            formatted = prompt_template
+        
+        # 仅对基础QA类型进行“自动附加问题文本”，其它类型严格使用XML模板
+        question_text = kwargs.get("question")
+        try:
+            from .constants import QuestionType as _QT
+            is_basic_qa = question_type == _QT.BASIC_QA
+        except Exception:
+            is_basic_qa = False
+        if is_basic_qa and question_text and ("{question}" not in prompt_template) and (question_text not in formatted):
+            formatted = f"{formatted}\n\n{question_text}"
+            appended_question = True
+        
+        if appended_question:
+            logger.debug("Prompt模板未包含{question}，已附加传入问题到Prompt末尾")
+        
+        return formatted
     
     def update_prompt(self, question_type: QuestionType, new_prompt: str):
         """

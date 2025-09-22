@@ -94,6 +94,22 @@ class AsyncBatchProcessor:
         
         logger.info("异步批量处理器初始化完成")
     
+    def _escape_text_truth(self, text: Optional[str]) -> str:
+        """将答案转为单行并转义，便于写入 text_truth: '...'
+        - 合并换行为空格
+        - 转义反斜杠与单引号
+        - 去除首尾空白
+        """
+        if text is None:
+            return ""
+        try:
+            normalized = text.replace("\r", "")
+            one_line = " ".join(part.strip() for part in normalized.split("\n") if part.strip())
+            escaped = one_line.replace("\\", "\\\\").replace("'", "\\'")
+            return escaped.strip()
+        except Exception:
+            return str(text).strip()
+
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """加载配置文件"""
         try:
@@ -541,8 +557,8 @@ class AsyncBatchProcessor:
             if not answer:
                 answer = "处理失败，无法生成回答。"
             
-            # 使用text_truth格式
-            output_content = f"text_truth: {answer}"
+            # 使用text_truth格式（用单引号包裹，并进行转义与换行清理）
+            output_content = f"text_truth: '{self._escape_text_truth(answer)}'"
             
             # 保存为UTF-8编码的txt文件
             try:

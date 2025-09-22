@@ -399,7 +399,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
                 updated_lines.append(line)
             elif line.strip().startswith('text_truth:') and current_question_id == target_question_id:
                 # 更新这个问题的答案
-                updated_lines.append(f"text_truth: {answer}")
+                updated_lines.append(f"text_truth: '{self._escape_text_truth(answer)}'")
             else:
                 updated_lines.append(line)
         
@@ -421,7 +421,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             lines.extend([
                 f"question_id: {current_question_id}",
                 f"text_input: {original_content.get('text_input', '')}",
-                f"text_truth: {answer}"
+                f"text_truth: '{self._escape_text_truth(answer)}'"
             ])
             return '\n'.join(lines)
         
@@ -437,7 +437,7 @@ class OptimizedBatchProcessor(AsyncBatchProcessor):
             lines.extend([
                 f"question_id: {q_data['question_id']}",
                 f"text_input: {q_data['text_input']}",
-                f"text_truth: {answer if q_data['question_id'] == current_question_id else ''}"
+                f"text_truth: '{self._escape_text_truth(answer) if q_data['question_id'] == current_question_id else ''}'"
             ])
         
         return '\n'.join(lines)
