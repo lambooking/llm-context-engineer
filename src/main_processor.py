@@ -227,8 +227,8 @@ class LLMContextProcessor:
                 confidence = 1.0
                 logger.info(f"使用强制指定的问题类型: {question_type.value}")
             
-            # 2. 组合所有问题为一个请求
-            combined_question = self._combine_questions(questions)
+            # 2. 组合所有问题为一个请求（仅 BASIC_QA 使用“简短编号作答”约束）
+            combined_question = self._combine_questions(questions, question_type)
             
             # 3. 获取对应的Prompt
             prompt = self.prompt_manager.get_prompt(question_type, question=combined_question)
@@ -286,35 +286,49 @@ class LLMContextProcessor:
                 })
             return results
     
-    def _combine_questions(self, questions: List[str]) -> str:
-        """将多个问题组合成一个请求"""
-        combined = "请回答以下问题：\n\n"
-        for i, question in enumerate(questions, 1):
-            combined += f"{i}. {question}\n"
-        combined += "\n请分别回答每个问题，用数字标号对应。"
-        return combined
+    def _combine_questions(self, questions: List[str], question_type: QuestionType) -> str:
+        """将多个问题组合成一个请求
+        - BASIC_QA: 强调“按编号、简短作答、仅输出答案”
+        - 其他类型: 保持原有提示，不施加简短作答约束
+        """
+        lines = [f"{i}. {q}" for i, q in enumerate(questions, 1)]
+        question_block = "\n".join(lines)
+        if question_type == QuestionType.BASIC_QA:
+            instructions = "请回答以下多个问题（只需给出简短答案）：\n\n"
+            answer_constraints = (
+                "\n\n回答要求：\n"
+                "- 按数字编号逐条作答（1. 2. 3. ...）。\n"
+                "- 每条尽量用一个词或一个数字，不要解释。\n"
+                "- 仅输出答案，不要复述问题。\n"
+            )
+            return f"{instructions}{question_block}{answer_constraints}"
+        # 非 BASIC_QA，使用温和提示，便于外层 XML 模板主导风格
+        return f"请回答以下问题：\n\n{question_block}\n\n请分别回答每个问题，用数字标号对应。"
     
     def _split_multi_answer(self, full_answer: str, num_questions: int) -> List[str]:
         """分割多问题的答案"""
         import re
         
-        # 尝试按数字标号分割答案
-        pattern = r'(\d+)[\.、]\s*'
-        parts = re.split(pattern, full_answer)
-        
+        # 优先按“换行+编号”分割，支持多种标点形式
+        regex = re.compile(r'(?:^|\n)\s*(\d+)[\.:：、\)]\s*', re.MULTILINE)
+        parts = regex.split(full_answer)
         if len(parts) >= num_questions * 2:
-            answers = []
+            answers: List[str] = []
             for i in range(1, num_questions * 2, 2):
                 if i + 1 < len(parts):
                     answer = parts[i + 1].strip()
-                    # 清理答案，移除下一个数字标号前的内容
-                    next_num_match = re.search(r'\n\d+[\.、]\s*', answer)
+                    # 清理掉紧随其后的下一个编号段落（同一行或换行）
+                    next_num_match = re.search(r'(?:\n|^)\s*\d+[\.:：、\)]\s*', answer, flags=re.MULTILINE)
                     if next_num_match:
                         answer = answer[:next_num_match.start()].strip()
                     answers.append(answer)
-            
             if len(answers) == num_questions:
                 return answers
+        
+        # 回退：按行切分，取前 N 行非空作为答案
+        line_answers = [line.strip() for line in full_answer.strip().splitlines() if line.strip()]
+        if len(line_answers) >= num_questions:
+            return line_answers[:num_questions]
         
         # 如果分割失败，将整个答案分配给所有问题
         logger.warning("无法正确分割多问题答案，将完整答案分配给所有问题")
